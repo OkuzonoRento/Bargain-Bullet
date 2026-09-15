@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEditor; // ※Editorスクリプトでのみ使用可能
 
-[CustomEditor(typeof(CylinderController))] // ① 対象となるスクリプトを指定
+[CustomEditor(typeof(BattleManager))]
 public class TargetScriptEditor : Editor
 {
     public override void OnInspectorGUI()
@@ -10,13 +10,16 @@ public class TargetScriptEditor : Editor
         DrawDefaultInspector();
 
         // 描画対象のオブジェクトを参照
-        CylinderController script = (CylinderController)target;
+        BattleManager battleManagerScript = (BattleManager)target;
 
-        // ② インスペクター上にボタンを作成
-        if (GUILayout.Button("シリンダー再装填"))
+        if (GUILayout.Button("自分に向けて撃つ"))
         {
-            // ボタンが押された時の処理（メソッド実行）
-            script.SetCylinder();
+            battleManagerScript.OnPlayerShootSelf();
+        }
+
+        if (GUILayout.Button("相手に向けて撃つ"))
+        {
+            battleManagerScript.OnPlayerShootOpponent();
         }
     }
 }
