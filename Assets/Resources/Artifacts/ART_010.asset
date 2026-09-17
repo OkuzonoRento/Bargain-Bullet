@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f487972f355f46e46a46cb18e0dd95b5, type: 3}
+  m_Name: ART_010
+  m_EditorClassIdentifier: Assembly-CSharp::BargainBullet.Artifacts.ArtifactData
+  id: ART_010
+  artifactName: 
+  rarity: 1
+  artifactType: 0
+  icon: {fileID: 0}
+  maxHeat: 999
+  triggerCondition: 7
+  probability: 1
+  effectType: 9
+  effectValue: 1
+  description: "3\u9023\u7D9A\u3067\u7A7A\u7832\u304C\u51FA\u305F\u5F8C\u78BA\u5B9A\u3067\u6B21\u306E\u5F3E\u3092\u5B9F\u5F3E\u5316"

@@ -1,17 +1,20 @@
+using UnityEditor;
 using UnityEngine;
-using UnityEditor; // ※Editorスクリプトでのみ使用可能
 
+#if UNITY_EDITOR
 [CustomEditor(typeof(BattleManager))]
 public class TargetScriptEditor : Editor
 {
     public override void OnInspectorGUI()
     {
-        // 元のインスペクター表示（変数など）をそのまま描画
+        // インスペクターの標準変数を表示
         DrawDefaultInspector();
 
-        // 描画対象のオブジェクトを参照
         BattleManager battleManagerScript = (BattleManager)target;
 
+        GUILayout.Space(10);
+
+        // プレイヤーの行動用テストボタン
         if (GUILayout.Button("自分に向けて撃つ"))
         {
             battleManagerScript.OnPlayerShootSelf();
@@ -23,3 +26,4 @@ public class TargetScriptEditor : Editor
         }
     }
 }
+#endif

@@ -11,18 +11,11 @@ public class CylinderController : MonoBehaviour
 
     public int RemainingBullets => _cylinder.Count;
 
-
-    /// <summary>
-    /// シリンダー再生成
-    /// </summary>
-
     public void SetCylinder()
     {
-        //シリンダー内にランダムで実弾・空砲を装填
-
         _cylinder.Clear();
         int random = Random.Range(_minAmmunition, _maxAmmunition);
-        Vector2Int rate = new ((int)(random * _minRate), (int)(random * _maxRate) + 1);
+        Vector2Int rate = new((int)(random * _minRate), (int)(random * _maxRate) + 1);
         int realCount = Random.Range(rate.x, rate.y);
         for (int c = 0; c < realCount; c++)
         {
@@ -33,7 +26,6 @@ public class CylinderController : MonoBehaviour
             _cylinder.Add(false);
         }
 
-        //シリンダー内ランダム装填
         for (int r = _cylinder.Count - 1; r > 0; r--)
         {
             int randomIndex = Random.Range(0, r + 1);
@@ -41,12 +33,8 @@ public class CylinderController : MonoBehaviour
             _cylinder[r] = _cylinder[randomIndex];
             _cylinder[randomIndex] = temp;
         }
-        Debug.LogWarning("実弾は " + realCount +"発、空砲は " + (random - realCount) + "発だ");
+        Debug.LogWarning("実弾は " + realCount + "発、空砲は " + (random - realCount) + "発だ");
     }
-
-    /// <summary>
-    /// 次の弾薬取得
-    /// </summary>
 
     public bool GetShot()
     {
@@ -55,10 +43,6 @@ public class CylinderController : MonoBehaviour
         return shotType;
     }
 
-    /// <summary>
-    /// シリンダー内の実弾数取得
-    /// </summary>
- 
     public int RemainingRealBullets
     {
         get
@@ -67,5 +51,20 @@ public class CylinderController : MonoBehaviour
             foreach (bool b in _cylinder) if (b) count++;
             return count;
         }
+    }
+
+    // アーティファクト & AI用メソッド ---
+
+    /// <summary> 次の弾種を覗き見る（単眼鏡 ART_003 用） </summary>
+    public bool PeekNextBullet()
+    {
+        if (_cylinder.Count > 0) return _cylinder[0];
+        return false;
+    }
+
+    /// <summary> 次の弾を強制的に実弾化する（カウントバレル ART_010 用） </summary>
+    public void ForceSetNextBulletReal()
+    {
+        if (_cylinder.Count > 0) _cylinder[0] = true;
     }
 }
