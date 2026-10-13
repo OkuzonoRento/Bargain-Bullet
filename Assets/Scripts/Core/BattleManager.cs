@@ -13,6 +13,10 @@ public class BattleManager : MonoBehaviour
     [SerializeField] private BattleAI _battleAI;
     [SerializeField] private ArtifactManager _artifactManager;
 
+    [Header("ランタンUI参照")]
+    [SerializeField] private LanternHealthController _playerLanternController;
+    [SerializeField] private LanternHealthController _enemyLanternController;
+
     [Header("ステータス")]
     [SerializeField, Min(2)] private int _playerHp = 2;
     [SerializeField, Min(2)] private int _enemyHp = 2;
@@ -40,6 +44,8 @@ public class BattleManager : MonoBehaviour
         _consecutiveBlanks = 0;
 
         if (_cylinderController != null) _cylinderController.SetCylinder();
+
+        UpdateLanterns();
 
         _currentTurn = BattleTurn.Player;
         NotifyTurnStart();
@@ -176,6 +182,11 @@ public class BattleManager : MonoBehaviour
             _playerHp = Mathf.Max(0, _playerHp - amount);
         }
 
+        if (_playerLanternController != null)
+        {
+            _playerLanternController.UpdateLanternGlow(_playerHp);
+        }
+
         if (_playerHp <= 0)
         {
             Debug.LogWarning("ゲームオーバー！");
@@ -186,6 +197,12 @@ public class BattleManager : MonoBehaviour
     private void ApplyDamageToEnemy(int amount)
     {
         _enemyHp = Mathf.Max(0, _enemyHp - amount);
+
+        if (_enemyLanternController != null)
+        {
+            _enemyLanternController.UpdateLanternGlow(_enemyHp);
+        }
+
         if (_enemyHp <= 0)
         {
             Debug.LogWarning("勝利！");
@@ -228,6 +245,12 @@ public class BattleManager : MonoBehaviour
                 Debug.Log($"[予知] 次の弾薬種: {(isNextReal ? "実弾" : "空砲")}");
             }
         }
+    }
+
+    private void UpdateLanterns()
+    {
+        if (_playerLanternController != null) _playerLanternController.UpdateLanternGlow(_playerHp);
+        if (_enemyLanternController != null) _enemyLanternController.UpdateLanternGlow(_enemyHp);
     }
 
     private IEnumerator EnemyTurnRoutine()
