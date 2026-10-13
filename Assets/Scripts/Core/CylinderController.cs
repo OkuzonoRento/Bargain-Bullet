@@ -16,20 +16,65 @@ public class CylinderController : MonoBehaviour
     private float _minRate = 0.4f;
     private float _maxRate = 0.8f;
 
-    private Coroutine _fadeRoutine;
+    // メッセージの順番待ちキュー
+    private readonly Queue<string> _messageQueue = new Queue<string>();
+    private bool _isShowingMessage = false;
 
     public int RemainingBullets => _cylinder.Count;
 
     private void Start()
     {
-        // ゲーム開始時は完全に透明にして非表示（またはオブジェクト無効）にしておく
         if (reloadInfoText != null)
         {
             Color col = reloadInfoText.color;
             col.a = 0f;
             reloadInfoText.color = col;
-            reloadInfoText.gameObject.SetActive(false);
+            //reloadInfoText.gameObject.SetActive(false);
         }
+    }
+
+    public void ShowTextInfo(string message)
+    {
+        // 順番待ちのキューに追加
+        _messageQueue.Enqueue(message);
+
+        // もし現在メッセージを表示中でなければ、すぐに再生を開始する
+        if (!_isShowingMessage)
+        {
+            StartCoroutine(ProcessMessageQueue());
+        }
+    }
+
+    private IEnumerator ProcessMessageQueue()
+    {
+        _isShowingMessage = true;
+
+        while (_messageQueue.Count > 0)
+        {
+            string message = _messageQueue.Dequeue();
+            yield return StartCoroutine(ShowMessageRoutine(message));
+        }
+
+        _isShowingMessage = false;
+    }
+
+    private IEnumerator ShowMessageRoutine(string message)
+    {
+        if (reloadInfoText == null) yield break;
+
+        reloadInfoText.text = message;
+        reloadInfoText.gameObject.SetActive(true);
+
+        // 1. フェードイン
+        yield return StartCoroutine(FadeTextAlpha(0f, 1f, fadeDuration));
+
+        // 2. 待機
+        yield return new WaitForSeconds(displayDuration);
+
+        // 3. フェードアウト
+        yield return StartCoroutine(FadeTextAlpha(1f, 0f, fadeDuration));
+
+        reloadInfoText.gameObject.SetActive(false);
     }
 
     public void SetCylinder()
@@ -58,39 +103,7 @@ public class CylinderController : MonoBehaviour
         string msg = "実弾は " + realCount + "発、空砲は " + (random - realCount) + "発だ";
         Debug.LogWarning(msg);
 
-        ShowReloadInfo(msg);
-    }
-
-    private void ShowReloadInfo(string message)
-    {
-        if (reloadInfoText == null) return;
-
-        reloadInfoText.text = message;
-        reloadInfoText.gameObject.SetActive(true);
-
-        // 既に動いているフェード処理があれば停止
-        if (_fadeRoutine != null)
-        {
-            StopCoroutine(_fadeRoutine);
-        }
-
-        // フェードインして、待機して、フェードアウトする一連のコルーチンを開始
-        _fadeRoutine = StartCoroutine(FadeRoutine(displayDuration));
-    }
-
-    private IEnumerator FadeRoutine(float stayDuration)
-    {
-        // 1. フェードイン（透明 0 -> 不透明 1）
-        yield return StartCoroutine(FadeTextAlpha(0f, 1f, fadeDuration));
-
-        // 2. 指定時間そのまま待機
-        yield return new WaitForSeconds(stayDuration);
-
-        // 3. フェードアウト（不透明 1 -> 透明 0）
-        yield return StartCoroutine(FadeTextAlpha(1f, 0f, fadeDuration));
-
-        // 完全に消えたらオブジェクトを非効化
-        reloadInfoText.gameObject.SetActive(false);
+        ShowTextInfo(msg); // キューを経由して表示
     }
 
     private IEnumerator FadeTextAlpha(float startAlpha, float endAlpha, float duration)
@@ -128,7 +141,6 @@ public class CylinderController : MonoBehaviour
         }
     }
 
-    // アーティファクト & AI用メソッド ---
     public bool PeekNextBullet()
     {
         if (_cylinder.Count > 0) return _cylinder[0];

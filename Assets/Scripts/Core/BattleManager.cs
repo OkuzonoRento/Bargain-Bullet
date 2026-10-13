@@ -2,6 +2,7 @@ using BargainBullet.Artifacts;
 using BargainBullet.Core;
 using BargainBullet.Economy;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 public enum BattleTurn { Player, Enemy }
@@ -11,6 +12,8 @@ public class BattleManager : MonoBehaviour
     [Header("参照")]
     [SerializeField] private CylinderController _cylinderController;
     [SerializeField] private BattleAI _battleAI;
+
+    [Header("アーティファクト管理")]
     [SerializeField] private ArtifactManager _artifactManager;
 
     [Header("ランタンUI参照")]
@@ -30,7 +33,6 @@ public class BattleManager : MonoBehaviour
     {
         if (_artifactManager != null)
         {
-            // ART_015: 焼失ダメージを敵に適用するイベント購読
             _artifactManager.OnBurnOutDamageToEnemy += amount => ApplyDamageToEnemy(amount);
         }
         BattleSetup();
@@ -81,32 +83,39 @@ public class BattleManager : MonoBehaviour
 
     private void ExecuteShoot(bool targetIsEnemy, BattleTurn nextTurnIfHit, BattleTurn nextTurnIfMiss)
     {
-        // =========================================================
-        // 1. 【射撃前トリガー】引き金を引き切る・弾が出る前の処理
-        // =========================================================
+        bool isEnemyTurn = (_currentTurn == BattleTurn.Enemy);
+
         if (_artifactManager != null)
         {
-            // 射撃前カウントダウン（身代わり時計など）
-            int dueDamage = _artifactManager.OnShotExecuted();
+            int dueDamage = _artifactManager.OnShotExecuted(isEnemyTurn);
             if (dueDamage > 0)
             {
-                ApplyDirectDamageToPlayer(dueDamage);
-                if (_playerHp <= 0) return;
+                if (isEnemyTurn) ApplyDamageToEnemy(dueDamage);
+                else ApplyDirectDamageToPlayer(dueDamage);
+                if (_playerHp <= 0 || _enemyHp <= 0) return;
             }
 
-            // 射撃前不発化判定 (ジャム)
-            if (_currentTurn == BattleTurn.Player && !targetIsEnemy)
+            if (!isEnemyTurn && !targetIsEnemy)
             {
-                if (_artifactManager.CheckJamSelfReal())
+                if (_artifactManager.CheckJamSelfReal(isEnemy: false))
                 {
-                    Debug.Log("[Artifact] ジャム発動！ 射撃前に無効化してターン継続！");
+                    Debug.Log("[Artifact] ジャム発動！");
                     ChangeTurn(BattleTurn.Player);
+                    return;
+                }
+            }
+            else if (isEnemyTurn && targetIsEnemy)
+            {
+                if (_artifactManager.CheckJamSelfReal(isEnemy: true))
+                {
+                    Debug.Log("[Artifact] 敵のジャム発動！");
+                    ChangeTurn(BattleTurn.Enemy);
                     return;
                 }
             }
         }
 
-        // 実際の着弾・発砲処理へ
+        // 実際の弾の発射・判定
         bool isReal = _cylinderController.GetShot();
 
         if (isReal)
@@ -114,107 +123,134 @@ public class BattleManager : MonoBehaviour
             _consecutiveBlanks = 0;
             int damage = 1;
 
-            if (_currentTurn == BattleTurn.Player && targetIsEnemy && _artifactManager != null)
+            if (_artifactManager != null)
             {
-                damage = _artifactManager.ProcessOutgoingDamage(damage);
+                damage = _artifactManager.ProcessOutgoingDamage(damage, isEnemyTurn);
             }
 
-            if (targetIsEnemy) ApplyDamageToEnemy(damage);
-            else ApplyDamageToPlayer(damage); // 被弾処理へ呼び出し
+            if (targetIsEnemy)
+            {
+                if (isEnemyTurn) ApplyDirectDamageToPlayer(damage);
+                else ApplyDamageToEnemy(damage);
+            }
+            else
+            {
+                if (isEnemyTurn) ApplyDamageToEnemy(damage);
+                else ApplyDirectDamageToPlayer(damage);
+            }
 
             if (_playerHp > 0 && _enemyHp > 0) ChangeTurn(nextTurnIfHit);
         }
         else
         {
-            // 空砲処理...
             _consecutiveBlanks++;
-            if (_currentTurn == BattleTurn.Player && !targetIsEnemy && _artifactManager != null)
+            if (_artifactManager != null)
             {
-                _artifactManager.CheckCoolAdjacentOnSelfBlank();
-                int heal = _artifactManager.CheckHealOnSelfBlank();
-                if (heal > 0) _playerHp = Mathf.Min(_maxHp, _playerHp + heal);
+                _artifactManager.CheckCoolAdjacentOnSelfBlank(isEnemyTurn);
+                int heal = _artifactManager.CheckHealOnSelfBlank(isEnemyTurn);
+                if (heal > 0)
+                {
+                    if (isEnemyTurn) _enemyHp = Mathf.Min(_maxHp, _enemyHp + heal);
+                    else _playerHp = Mathf.Min(_maxHp, _playerHp + heal);
+                }
             }
             ChangeTurn(nextTurnIfMiss);
         }
+
+        // =========================================================
+        // ★ 発砲処理がすべて終わった後に、オブジェクト消去と「壊れたか」表示を実行
+        // =========================================================
+        if (!isEnemyTurn && _artifactManager != null)
+        {
+            List<ArtifactInstance> burnedItems = _artifactManager.ExtractBurnedOutItems(isEnemy: false);
+            if (burnedItems.Count > 0)
+            {
+                if (_cylinderController != null)
+                {
+                    _cylinderController.ShowTextInfo("壊れたか");
+                }
+            }
+        }
     }
 
-    /// <summary>
-    /// ★ 追加: プレイヤーへのダメージ適用処理（反射判定や被弾時エフェクトを経由）
-    /// </summary>
-    private void ApplyDamageToPlayer(int baseAmount)
+    private void ApplyDirectDamageToPlayer(int baseAmount)
     {
         int finalDamage = baseAmount;
 
         if (_artifactManager != null)
         {
-            // 被弾時・反射判定 (ART_001 / ART_005)
-            var (damage, reflect) = _artifactManager.ProcessIncomingDamage(baseAmount);
+            var (damage, reflect) = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: false);
             finalDamage = damage;
 
             if (reflect > 0)
             {
-                Debug.Log($"[Artifact] 被弾ダメージ {reflect} を相手に反射！");
                 ApplyDamageToEnemy(reflect);
             }
         }
 
         if (finalDamage > 0)
         {
-            ApplyDirectDamageToPlayer(finalDamage);
-        }
-    }
+            bool isFatal = (_playerHp - finalDamage) <= 0;
 
-    private void ApplyDirectDamageToPlayer(int amount)
-    {
-        // =========================================================
-        // 2. 【食らった瞬間・致死判定トリガー】
-        // =========================================================
-        bool isFatal = (_playerHp - amount) <= 0;
-
-        // 食らった瞬間に耐える判定（食らった直後にカットインが入る）
-        if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection())
-        {
-            Debug.Log("[Artifact] 致死ダメージを受けた瞬間に耐えた！");
-            _playerHp = 1;
-        }
-        else
-        {
-            _playerHp = Mathf.Max(0, _playerHp - amount);
-        }
-
-        if (_playerLanternController != null)
-        {
-            _playerLanternController.UpdateLanternGlow(_playerHp);
-        }
-
-        if (_playerHp <= 0)
-        {
-            Debug.LogWarning("ゲームオーバー！");
-            Invoke(nameof(BattleSetup), 3.0f);
-        }
-    }
-
-    private void ApplyDamageToEnemy(int amount)
-    {
-        _enemyHp = Mathf.Max(0, _enemyHp - amount);
-
-        if (_enemyLanternController != null)
-        {
-            _enemyLanternController.UpdateLanternGlow(_enemyHp);
-        }
-
-        if (_enemyHp <= 0)
-        {
-            Debug.LogWarning("勝利！");
-
-            // ART_009 / ART_012: 勝利時の利息＆報酬精算
-            if (MoneyManager.Instance != null && _artifactManager != null)
+            if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection(isEnemy: false))
             {
-                bool hasBonus = _artifactManager.HasBonusInterestArtifact();
-                MoneyManager.Instance.CalculateWinReward(hasBonus);
+                _playerHp = 1;
+            }
+            else
+            {
+                _playerHp = Mathf.Max(0, _playerHp - finalDamage);
             }
 
-            Invoke(nameof(BattleSetup), 3.0f);
+            if (_playerLanternController != null) _playerLanternController.UpdateLanternGlow(_playerHp);
+
+            if (_playerHp <= 0)
+            {
+                Debug.LogWarning("ゲームオーバー！");
+                Invoke(nameof(BattleSetup), 3.0f);
+            }
+        }
+    }
+
+    private void ApplyDamageToEnemy(int baseAmount)
+    {
+        int finalDamage = baseAmount;
+
+        if (_artifactManager != null)
+        {
+            var (damage, reflect) = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: true);
+            finalDamage = damage;
+
+            if (reflect > 0)
+            {
+                ApplyDirectDamageToPlayer(reflect);
+            }
+        }
+
+        if (finalDamage > 0)
+        {
+            bool isFatal = (_enemyHp - finalDamage) <= 0;
+
+            if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection(isEnemy: true))
+            {
+                _enemyHp = 1;
+            }
+            else
+            {
+                _enemyHp = Mathf.Max(0, _enemyHp - finalDamage);
+            }
+
+            if (_enemyLanternController != null) _enemyLanternController.UpdateLanternGlow(_enemyHp);
+
+            if (_enemyHp <= 0)
+            {
+                Debug.LogWarning("勝利！");
+                if (MoneyManager.Instance != null && _artifactManager != null)
+                {
+                    bool hasBonus = _artifactManager.HasBonusInterestArtifact();
+                    MoneyManager.Instance.CalculateWinReward(hasBonus);
+                }
+                Invoke(nameof(BattleSetup), 3.0f);
+            }
         }
     }
 
@@ -238,11 +274,16 @@ public class BattleManager : MonoBehaviour
     {
         if (_currentTurn == BattleTurn.Player && _artifactManager != null)
         {
-            // ART_003: 次弾予知
+            // ART_003: 次弾予知（「次は実弾な気がする」「次は空砲な気がする」に変更）
             if (_artifactManager.CheckPredictNextBullet())
             {
                 bool isNextReal = _cylinderController.PeekNextBullet();
-                Debug.Log($"[予知] 次の弾薬種: {(isNextReal ? "実弾" : "空砲")}");
+                string predictMsg = isNextReal ? "次は実弾な気がする" : "次は空砲な気がする";
+
+                if (_cylinderController != null)
+                {
+                    _cylinderController.ShowTextInfo(predictMsg);
+                }
             }
         }
     }
@@ -263,7 +304,8 @@ public class BattleManager : MonoBehaviour
             _cylinderController.RemainingRealBullets,
             _enemyHp,
             _playerHp,
-            _maxHp
+            _maxHp,
+            _artifactManager
         );
 
         if (action == AIAction.ShootSelf) OnEnemyShootSelf();

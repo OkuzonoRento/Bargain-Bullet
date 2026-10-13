@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace BargainBullet.Artifacts
 {
@@ -7,6 +8,7 @@ namespace BargainBullet.Artifacts
         public ArtifactData MasterData { get; private set; }
         public int CurrentHeat { get; private set; }
         public bool IsBurnedOut { get; private set; }
+        public GameObject VisualGameObject { get; set; } // ★ 追加: 3Dモデルの参照
 
         public event Action<ArtifactInstance, float> OnHeatChanged;
         public event Action<ArtifactInstance> OnBurnedOut;

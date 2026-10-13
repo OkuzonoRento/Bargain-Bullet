@@ -8,58 +8,84 @@ namespace BargainBullet.Artifacts
 {
     public class ArtifactManager : MonoBehaviour
     {
-        [SerializeField] private List<ArtifactData> initialArtifacts;
-        [SerializeField] private Transform[] tableSlots;
+        [Header("■ プレイヤー側 設定")]
+        [SerializeField] private List<ArtifactData> playerInitialArtifacts;
+        [SerializeField] private Transform[] playerTableSlots;
 
-        public List<ArtifactInstance> EquippedArtifacts { get; private set; } = new List<ArtifactInstance>();
-        private readonly List<int> _delayedDamageQueue = new List<int>();
+        [Header("■ 敵側 設定")]
+        [SerializeField] private List<ArtifactData> enemyInitialArtifacts;
+        [SerializeField] private Transform[] enemyTableSlots;
 
-        public event Action<int> OnBurnOutDamageToEnemy; // ART_015用イベント通知[cite: 8]
+        public List<ArtifactInstance> PlayerEquippedArtifacts { get; private set; } = new List<ArtifactInstance>();
+        public List<ArtifactInstance> EnemyEquippedArtifacts { get; private set; } = new List<ArtifactInstance>();
+
+        private readonly List<int> _playerDelayedDamageQueue = new List<int>();
+        private readonly List<int> _enemyDelayedDamageQueue = new List<int>();
+
+        public event Action<int> OnBurnOutDamageToEnemy;
 
         private void Awake()
         {
-            if (initialArtifacts == null) return;
-            for (int i = 0; i < initialArtifacts.Count; i++)
+            if (playerInitialArtifacts != null)
             {
-                Transform slot = (tableSlots != null && i < tableSlots.Length) ? tableSlots[i] : null;
-                EquipArtifact(initialArtifacts[i], slot);
-            }
-        }
-
-        public void EquipArtifact(ArtifactData data, Transform slotTransform = null)
-        {
-            var instance = new ArtifactInstance(data);
-            instance.OnBurnedOut += HandleItemBurnOut; //[cite: 8]
-            EquippedArtifacts.Add(instance);
-
-            if (data.artifactPrefab != null && slotTransform != null)
-            {
-                GameObject obj = Instantiate(data.artifactPrefab, slotTransform);
-                var visual = obj.GetComponent<ArtifactVisual>();
-                if (visual != null)
+                for (int i = 0; i < playerInitialArtifacts.Count; i++)
                 {
-                    instance.OnHeatChanged += (item, ratio) => visual.UpdateHeatVisual(ratio); //[cite: 8]
+                    if (playerInitialArtifacts[i] == null) continue;
+                    Transform slot = (playerTableSlots != null && i < playerTableSlots.Length) ? playerTableSlots[i] : null;
+                    EquipArtifact(playerInitialArtifacts[i], slot, isEnemy: false);
+                }
+            }
+
+            if (enemyInitialArtifacts != null)
+            {
+                for (int i = 0; i < enemyInitialArtifacts.Count; i++)
+                {
+                    if (enemyInitialArtifacts[i] == null) continue;
+                    Transform slot = (enemyTableSlots != null && i < enemyTableSlots.Length) ? enemyTableSlots[i] : null;
+                    EquipArtifact(enemyInitialArtifacts[i], slot, isEnemy: true);
                 }
             }
         }
 
-        // =========================================================
-        // ★ 汎用化・最適化済みエフェクト実行基盤 (演出連動)
-        // =========================================================
-
-        private bool TryProcArtifact(TriggerCondition trigger, EffectType effect, Action<ArtifactInstance> onSuccess)
+        public void EquipArtifact(ArtifactData data, Transform slotTransform, bool isEnemy)
         {
-            for (int i = EquippedArtifacts.Count - 1; i >= 0; i--)
+            var instance = new ArtifactInstance(data);
+            instance.OnBurnedOut += (item) => HandleItemBurnOut(item, isEnemy);
+
+            if (isEnemy)
             {
-                var item = EquippedArtifacts[i];
+                EnemyEquippedArtifacts.Add(instance);
+            }
+            else
+            {
+                PlayerEquippedArtifacts.Add(instance);
+            }
+
+            if (data.artifactPrefab != null && slotTransform != null)
+            {
+                GameObject obj = Instantiate(data.artifactPrefab, slotTransform);
+                instance.VisualGameObject = obj; // 3Dモデルの参照を保持
+
+                var visual = obj.GetComponent<ArtifactVisual>();
+                if (visual != null)
+                {
+                    instance.OnHeatChanged += (item, ratio) => visual.UpdateHeatVisual(ratio);
+                }
+            }
+        }
+
+        private bool TryProcArtifact(List<ArtifactInstance> targetList, TriggerCondition trigger, EffectType effect, Action<ArtifactInstance> onSuccess, bool isEnemy)
+        {
+            for (int i = targetList.Count - 1; i >= 0; i--)
+            {
+                var item = targetList[i];
                 if (item.IsBurnedOut || item.MasterData.triggerCondition != trigger || item.MasterData.effectType != effect) continue;
 
                 if (UnityEngine.Random.value <= item.MasterData.probability)
                 {
-                    Debug.Log($"[CutIn Queue] {item.MasterData.artifactName} 発動！");
+                    Debug.Log($"[CutIn Queue] {(isEnemy ? "[Enemy] " : "[Player] ")}{item.MasterData.artifactName} 発動！");
 
-                    // ★ キューへ追加してコンボ化
-                    if (ArtifactCutInUI.Instance != null)
+                    if (!isEnemy && ArtifactCutInUI.Instance != null)
                     {
                         ArtifactCutInUI.Instance.EnqueueCutIn(item.MasterData.artifactName, item.MasterData.artifactPrefab);
                     }
@@ -76,10 +102,11 @@ namespace BargainBullet.Artifacts
             return false;
         }
 
-        private void HandleItemBurnOut(ArtifactInstance item)
+        private void HandleItemBurnOut(ArtifactInstance item, bool isEnemy)
         {
-            // ART_014: 熱限界時にリセット＆身代わり[cite: 8]
-            var coolSpray = EquippedArtifacts.Find(x => !x.IsBurnedOut && x.MasterData.effectType == EffectType.ResetHeatOfItem);
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+
+            var coolSpray = targetList.Find(x => !x.IsBurnedOut && x.MasterData.effectType == EffectType.ResetHeatOfItem);
             if (coolSpray != null)
             {
                 item.ResetHeat();
@@ -87,150 +114,148 @@ namespace BargainBullet.Artifacts
                 return;
             }
 
-            // ART_015: 焼失時に相手へ1ダメージ[cite: 8]
-            TryProcArtifact(TriggerCondition.OnItemBurnOut, EffectType.DamageOnBurnOut, _ => {
-                OnBurnOutDamageToEnemy?.Invoke(1); //[cite: 8]
-            });
+            TryProcArtifact(targetList, TriggerCondition.OnItemBurnOut, EffectType.DamageOnBurnOut, _ => {
+                if (!isEnemy) OnBurnOutDamageToEnemy?.Invoke(1);
+            }, isEnemy);
 
-            EquippedArtifacts.Remove(item); //[cite: 8]
+            // ※ここではまだDestroyせず、リストから外すだけにして、Visualの破棄は発砲後に遅らせる
+            targetList.Remove(item);
         }
 
-        private void CoolAdjacentItems(ArtifactInstance origin, int amount)
+        // ★ 発砲後に呼び出すことで、3Dモデルの消去と焼失の確定を同時に行う
+        public List<ArtifactInstance> ExtractBurnedOutItems(bool isEnemy)
         {
-            int index = EquippedArtifacts.IndexOf(origin);
-            if (index > 0) EquippedArtifacts[index - 1].CoolHeat(amount); //[cite: 8]
-            if (index < EquippedArtifacts.Count - 1) EquippedArtifacts[index + 1].CoolHeat(amount); //[cite: 8]
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            var burnedList = new List<ArtifactInstance>();
+
+            for (int i = targetList.Count - 1; i >= 0; i--)
+            {
+                if (targetList[i].IsBurnedOut)
+                {
+                    burnedList.Add(targetList[i]);
+
+                    // ★ ここで初めて3Dモデルを破棄する
+                    if (targetList[i].VisualGameObject != null)
+                    {
+                        Destroy(targetList[i].VisualGameObject);
+                    }
+
+                    targetList.RemoveAt(i);
+                }
+            }
+            return burnedList;
         }
 
-        // =========================================================
-        // ★ 各種効果判定 API
-        // =========================================================
-
-        // ART_001 & ART_005: 被弾時判定 (遅延 & 反射)[cite: 8]
-        public (int finalDamage, int reflectDamage) ProcessIncomingDamage(int rawDamage)
+        private void CoolAdjacentItems(List<ArtifactInstance> targetList, ArtifactInstance origin, int amount)
         {
+            int index = targetList.IndexOf(origin);
+            if (index > 0) targetList[index - 1].CoolHeat(amount);
+            if (index < targetList.Count - 1) targetList[index + 1].CoolHeat(amount);
+        }
+
+        public bool HasEffect(bool isEnemy, EffectType effectType)
+        {
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            return targetList.Exists(x => !x.IsBurnedOut && x.MasterData.effectType == effectType);
+        }
+
+        public (int finalDamage, int reflectDamage) ProcessIncomingDamage(int rawDamage, bool isTargetEnemy)
+        {
+            var targetList = isTargetEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            var queue = isTargetEnemy ? _enemyDelayedDamageQueue : _playerDelayedDamageQueue;
             int immediateDamage = rawDamage;
             int reflectDamage = 0;
 
-            // ART_001: ダメージ遅延[cite: 8]
-            TryProcArtifact(TriggerCondition.OnTakeDamage, EffectType.DelayDamage, _ => {
-                for (int d = 0; d < rawDamage; d++) _delayedDamageQueue.Add(3); //[cite: 8]
+            TryProcArtifact(targetList, TriggerCondition.OnTakeDamage, EffectType.DelayDamage, _ => {
+                for (int d = 0; d < rawDamage; d++) queue.Add(3);
                 immediateDamage = 0;
-            });
+            }, isTargetEnemy);
 
-            // ART_005: 反射ダメージ[cite: 8]
-            TryProcArtifact(TriggerCondition.OnTakeDamage, EffectType.ReflectDamage, _ => {
+            TryProcArtifact(targetList, TriggerCondition.OnTakeDamage, EffectType.ReflectDamage, _ => {
                 reflectDamage = rawDamage;
-            });
+            }, isTargetEnemy);
 
             return (immediateDamage, reflectDamage);
         }
 
-        // ART_001: 射撃通過カウントダウン[cite: 8]
-        public int OnShotExecuted()
+        public int OnShotExecuted(bool isEnemy)
         {
+            var queue = isEnemy ? _enemyDelayedDamageQueue : _playerDelayedDamageQueue;
             int triggeredDamage = 0;
-            for (int i = _delayedDamageQueue.Count - 1; i >= 0; i--) //[cite: 8]
+            for (int i = queue.Count - 1; i >= 0; i--)
             {
-                _delayedDamageQueue[i]--;
-                if (_delayedDamageQueue[i] <= 0)
+                queue[i]--;
+                if (queue[i] <= 0)
                 {
                     triggeredDamage++;
-                    _delayedDamageQueue.RemoveAt(i); //[cite: 8]
+                    queue.RemoveAt(i);
                 }
             }
             return triggeredDamage;
         }
 
-        // ART_002: 隣接冷却判定[cite: 8]
-        public void CheckCoolAdjacentOnSelfBlank()
+        public void CheckCoolAdjacentOnSelfBlank(bool isEnemy)
         {
-            TryProcArtifact(TriggerCondition.OnShootSelfBlank, EffectType.CoolAdjacent, item => {
-                CoolAdjacentItems(item, (int)item.MasterData.effectValue); //[cite: 8]
-            });
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            TryProcArtifact(targetList, TriggerCondition.OnShootSelfBlank, EffectType.CoolAdjacent, item => {
+                CoolAdjacentItems(targetList, item, (int)item.MasterData.effectValue);
+            }, isEnemy);
         }
 
-        // ART_003: 予知 (スコープ)[cite: 8]
         public bool CheckPredictNextBullet()
         {
             bool predicted = false;
-            TryProcArtifact(TriggerCondition.OnTurnStart, EffectType.PredictNext, _ => {
+            TryProcArtifact(PlayerEquippedArtifacts, TriggerCondition.OnTurnStart, EffectType.PredictNext, _ => {
                 predicted = true;
-            });
+            }, isEnemy: false);
             return predicted;
         }
 
-        // ART_004: 自分実弾時の不発化[cite: 8]
-        public bool CheckJamSelfReal()
+        public bool CheckJamSelfReal(bool isEnemy)
         {
-            return TryProcArtifact(TriggerCondition.OnShootSelfReal, EffectType.JamSelfReal, null); //[cite: 8]
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            return TryProcArtifact(targetList, TriggerCondition.OnShootSelfReal, EffectType.JamSelfReal, null, isEnemy);
         }
 
-        // ART_006: 自分空砲時の回復[cite: 8]
-        public int CheckHealOnSelfBlank()
+        public int CheckHealOnSelfBlank(bool isEnemy)
         {
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
             int heal = 0;
-            TryProcArtifact(TriggerCondition.OnShootSelfBlank, EffectType.AddHp, item => {
-                heal = (int)item.MasterData.effectValue; //[cite: 8]
-            });
+            TryProcArtifact(targetList, TriggerCondition.OnShootSelfBlank, EffectType.AddHp, item => {
+                heal = (int)item.MasterData.effectValue;
+            }, isEnemy);
             return heal;
         }
 
-        // ART_007: 与ダメージ上昇[cite: 8]
-        public int ProcessOutgoingDamage(int baseDamage)
+        public int ProcessOutgoingDamage(int baseDamage, bool isEnemy)
         {
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
             int bonus = 0;
-            TryProcArtifact(TriggerCondition.OnAttackReal, EffectType.DamageBoost, item => {
-                bonus += (int)item.MasterData.effectValue; //[cite: 8]
-            });
+            TryProcArtifact(targetList, TriggerCondition.OnAttackReal, EffectType.DamageBoost, item => {
+                bonus += (int)item.MasterData.effectValue;
+            }, isEnemy);
             return baseDamage + bonus;
         }
 
-        // ART_008 & ART_012: 致死耐え[cite: 8]
-        public bool CheckFatalProtection()
+        public bool CheckFatalProtection(bool isEnemy)
         {
-            bool survived = TryProcArtifact(TriggerCondition.OnFatalDamage, EffectType.SurviveHP1, null); //[cite: 8]
+            var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
+            bool survived = TryProcArtifact(targetList, TriggerCondition.OnFatalDamage, EffectType.SurviveHP1, null, isEnemy);
             if (!survived)
             {
-                survived = TryProcArtifact(TriggerCondition.OnFatalDamage, EffectType.SurviveAndSeizeInterest, _ => {
-                    // ART_012: 保険発動時はマネーマネージャーへ通知
-                    if (MoneyManager.Instance != null)
+                survived = TryProcArtifact(targetList, TriggerCondition.OnFatalDamage, EffectType.SurviveAndSeizeInterest, _ => {
+                    if (!isEnemy && MoneyManager.Instance != null)
                     {
                         MoneyManager.Instance.SetSeizedInterestFlag();
                     }
-                });
+                }, isEnemy);
             }
             return survived;
         }
 
-        // ART_010: 3連続空砲での実弾化通知[cite: 8]
-        public void CheckThreeBlanks()
-        {
-            TryProcArtifact(TriggerCondition.OnThreeBlanks, EffectType.ForceRealBullet, null); //[cite: 8]
-        }
-
-        // ART_011: ターン強奪[cite: 8]
-        public bool CheckTurnSteal()
-        {
-            return TryProcArtifact(TriggerCondition.OnOpponentShootSelfBlank, EffectType.StealTurn, null); //[cite: 8]
-        }
-
-        // ART_013: 自分実弾被弾時の保険金精算
-        public void CheckInsuranceOnSelfShootReal(int damage)
-        {
-            TryProcArtifact(TriggerCondition.OnShootSelfReal, EffectType.InsuranceByDamage, item => {
-                float money = damage * item.MasterData.effectValue;
-                if (MoneyManager.Instance != null)
-                {
-                    MoneyManager.Instance.AddInsuranceMoney(money);
-                }
-            });
-        }
-
-        // ART_009: ボーナス金利所持チェック
         public bool HasBonusInterestArtifact()
         {
-            return EquippedArtifacts.Exists(x => !x.IsBurnedOut && x.MasterData.effectType == EffectType.BonusInterest);
+            return PlayerEquippedArtifacts.Exists(x => !x.IsBurnedOut && x.MasterData.effectType == EffectType.BonusInterest);
         }
     }
 }
