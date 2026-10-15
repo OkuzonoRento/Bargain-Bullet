@@ -64,7 +64,7 @@ namespace BargainBullet.Artifacts
             if (data.artifactPrefab != null && slotTransform != null)
             {
                 GameObject obj = Instantiate(data.artifactPrefab, slotTransform);
-                instance.VisualGameObject = obj; // 3Dモデルの参照を保持
+                instance.VisualGameObject = obj;
 
                 var visual = obj.GetComponent<ArtifactVisual>();
                 if (visual != null)
@@ -117,33 +117,38 @@ namespace BargainBullet.Artifacts
             TryProcArtifact(targetList, TriggerCondition.OnItemBurnOut, EffectType.DamageOnBurnOut, _ => {
                 if (!isEnemy) OnBurnOutDamageToEnemy?.Invoke(1);
             }, isEnemy);
-
-            // ※ここではまだDestroyせず、リストから外すだけにして、Visualの破棄は発砲後に遅らせる
-            targetList.Remove(item);
         }
 
-        // ★ 発砲後に呼び出すことで、3Dモデルの消去と焼失の確定を同時に行う
-        public List<ArtifactInstance> ExtractBurnedOutItems(bool isEnemy)
+        // ★ 発砲後に呼び出すことで、熱限界を迎えたアイテムを確実に回収・3Dモデル破棄を行う
+        public bool ProcessAndExtractBurnedOutItems(bool isEnemy, CylinderController cylinderController)
         {
             var targetList = isEnemy ? EnemyEquippedArtifacts : PlayerEquippedArtifacts;
-            var burnedList = new List<ArtifactInstance>();
+            bool hasBurnedOut = false;
 
             for (int i = targetList.Count - 1; i >= 0; i--)
             {
-                if (targetList[i].IsBurnedOut)
+                var item = targetList[i];
+                if (item.IsBurnedOut || item.CurrentHeat >= item.MasterData.maxHeat)
                 {
-                    burnedList.Add(targetList[i]);
+                    hasBurnedOut = true;
 
-                    // ★ ここで初めて3Dモデルを破棄する
-                    if (targetList[i].VisualGameObject != null)
+                    // 3Dモデルを破棄
+                    if (item.VisualGameObject != null)
                     {
-                        Destroy(targetList[i].VisualGameObject);
+                        Destroy(item.VisualGameObject);
                     }
 
                     targetList.RemoveAt(i);
                 }
             }
-            return burnedList;
+
+            // プレイヤー側の焼失があった場合のみ、キューを経由して「壊れたか」を表示
+            if (hasBurnedOut && !isEnemy && cylinderController != null)
+            {
+                cylinderController.ShowTextInfo("壊れたか");
+            }
+
+            return hasBurnedOut;
         }
 
         private void CoolAdjacentItems(List<ArtifactInstance> targetList, ArtifactInstance origin, int amount)

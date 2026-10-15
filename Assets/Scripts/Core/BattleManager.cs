@@ -20,6 +20,9 @@ public class BattleManager : MonoBehaviour
     [SerializeField] private LanternHealthController _playerLanternController;
     [SerializeField] private LanternHealthController _enemyLanternController;
 
+    [Header("カメラ・演出制御")]
+    [SerializeField] private BattleCameraController _battleCameraController;
+
     [Header("ステータス")]
     [SerializeField, Min(2)] private int _playerHp = 2;
     [SerializeField, Min(2)] private int _enemyHp = 2;
@@ -28,6 +31,7 @@ public class BattleManager : MonoBehaviour
 
     [Header("状態")]
     [SerializeField] private BattleTurn _currentTurn = BattleTurn.Player;
+    private bool _isInputLocked = true; // 初期状態はロックしておく
 
     private void Start()
     {
@@ -46,25 +50,61 @@ public class BattleManager : MonoBehaviour
         _consecutiveBlanks = 0;
 
         if (_cylinderController != null) _cylinderController.SetCylinder();
+        if (_battleCameraController != null) _battleCameraController.ResetCamera();
 
         UpdateLanterns();
 
         _currentTurn = BattleTurn.Player;
-        NotifyTurnStart();
+
+        // セットアップ時もカメラの初期化とターン開始テキストの終了を待ってから入力を解禁
+        StartCoroutine(WaitInitialSetupAndUnlockInput());
+    }
+
+    private IEnumerator WaitInitialSetupAndUnlockInput()
+    {
+        _isInputLocked = true;
+
+        if (_battleCameraController != null)
+        {
+            while (_battleCameraController.IsMoving) yield return null;
+        }
+
+        yield return new WaitForSeconds(0.2f);
+
+        // 修正：yield return に変更
+        yield return StartCoroutine(NotifyTurnStartRoutine());
+
+        _isInputLocked = false;
     }
 
     #region Action Endpoints
 
     public void OnPlayerShootSelf()
     {
-        if (_currentTurn == BattleTurn.Player)
-            ExecuteShoot(targetIsEnemy: false, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Player);
+        if (_isInputLocked || (_battleCameraController != null && _battleCameraController.IsMoving) || _currentTurn != BattleTurn.Player) return;
+        _isInputLocked = true;
+
+        if (_battleCameraController != null)
+        {
+            _battleCameraController.SwitchCameraForTarget(targetIsEnemy: false, isShootingSelf: true);
+            _battleCameraController.PlayRecoil(isHeavyHit: false);
+        }
+
+        ExecuteShoot(targetIsEnemy: false, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Player);
     }
 
     public void OnPlayerShootOpponent()
     {
-        if (_currentTurn == BattleTurn.Player)
-            ExecuteShoot(targetIsEnemy: true, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Enemy);
+        if (_isInputLocked || (_battleCameraController != null && _battleCameraController.IsMoving) || _currentTurn != BattleTurn.Player) return;
+        _isInputLocked = true;
+
+        if (_battleCameraController != null)
+        {
+            _battleCameraController.SwitchCameraForTarget(targetIsEnemy: true, isShootingSelf: false);
+            _battleCameraController.PlayRecoil(isHeavyHit: false);
+        }
+
+        ExecuteShoot(targetIsEnemy: true, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Enemy);
     }
 
     public void OnEnemyShootSelf()
@@ -156,21 +196,6 @@ public class BattleManager : MonoBehaviour
             }
             ChangeTurn(nextTurnIfMiss);
         }
-
-        // =========================================================
-        // ★ 発砲処理がすべて終わった後に、オブジェクト消去と「壊れたか」表示を実行
-        // =========================================================
-        if (!isEnemyTurn && _artifactManager != null)
-        {
-            List<ArtifactInstance> burnedItems = _artifactManager.ExtractBurnedOutItems(isEnemy: false);
-            if (burnedItems.Count > 0)
-            {
-                if (_cylinderController != null)
-                {
-                    _cylinderController.ShowTextInfo("壊れたか");
-                }
-            }
-        }
     }
 
     private void ApplyDirectDamageToPlayer(int baseAmount)
@@ -179,8 +204,9 @@ public class BattleManager : MonoBehaviour
 
         if (_artifactManager != null)
         {
-            var (damage, reflect) = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: false);
-            finalDamage = damage;
+            var damageReflectResult = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: false);
+            finalDamage = damageReflectResult.Item1;
+            int reflect = damageReflectResult.Item2;
 
             if (reflect > 0)
             {
@@ -190,6 +216,11 @@ public class BattleManager : MonoBehaviour
 
         if (finalDamage > 0)
         {
+            if (_battleCameraController != null && !(_currentTurn == BattleTurn.Player && _cylinderController.RemainingBullets <= 0))
+            {
+                StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
+            }
+
             bool isFatal = (_playerHp - finalDamage) <= 0;
 
             if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection(isEnemy: false))
@@ -217,8 +248,9 @@ public class BattleManager : MonoBehaviour
 
         if (_artifactManager != null)
         {
-            var (damage, reflect) = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: true);
-            finalDamage = damage;
+            var damageReflectResult = _artifactManager.ProcessIncomingDamage(baseAmount, isTargetEnemy: true);
+            finalDamage = damageReflectResult.Item1;
+            int reflect = damageReflectResult.Item2;
 
             if (reflect > 0)
             {
@@ -259,22 +291,75 @@ public class BattleManager : MonoBehaviour
         if (_cylinderController.RemainingBullets <= 0)
         {
             _cylinderController.SetCylinder();
+            if (_battleCameraController != null)
+            {
+                _battleCameraController.ResetCamera();
+                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: true));
+            }
+            else
+            {
+                ProcessArtifactBurnoutAndText();
+                _isInputLocked = false;
+            }
             _currentTurn = BattleTurn.Player;
-            NotifyTurnStart();
             return;
         }
 
         _currentTurn = nextTurn;
-        NotifyTurnStart();
 
-        if (_currentTurn == BattleTurn.Enemy) StartCoroutine(EnemyTurnRoutine());
+        if (_battleCameraController != null)
+        {
+            if (_currentTurn == BattleTurn.Enemy)
+            {
+                _battleCameraController.SwitchCameraForTarget(targetIsEnemy: true, isShootingSelf: false);
+                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: false));
+            }
+            else
+            {
+                _battleCameraController.ResetCamera();
+                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: true));
+            }
+        }
     }
 
-    private void NotifyTurnStart()
+    private IEnumerator WaitCameraAndProcessArtifactsRoutine(bool nextTurnIsPlayer)
+    {
+        if (_battleCameraController != null)
+        {
+            while (_battleCameraController.IsMoving)
+            {
+                yield return null;
+            }
+        }
+
+        yield return new WaitForSeconds(0.15f);
+
+        if (_artifactManager != null && !(_currentTurn == BattleTurn.Enemy && !nextTurnIsPlayer))
+        {
+            bool hasBurnedOut = _artifactManager.ProcessAndExtractBurnedOutItems(isEnemy: false, _cylinderController);
+
+            if (hasBurnedOut)
+            {
+                yield return new WaitForSeconds(1.2f);
+            }
+        }
+
+        if (!nextTurnIsPlayer)
+        {
+            StartCoroutine(EnemyTurnRoutine());
+        }
+        else
+        {
+            // 修正：yield return に変更
+            yield return StartCoroutine(NotifyTurnStartRoutine());
+            _isInputLocked = false;
+        }
+    }
+
+    private IEnumerator NotifyTurnStartRoutine()
     {
         if (_currentTurn == BattleTurn.Player && _artifactManager != null)
         {
-            // ART_003: 次弾予知（「次は実弾な気がする」「次は空砲な気がする」に変更）
             if (_artifactManager.CheckPredictNextBullet())
             {
                 bool isNextReal = _cylinderController.PeekNextBullet();
@@ -283,8 +368,17 @@ public class BattleManager : MonoBehaviour
                 if (_cylinderController != null)
                 {
                     _cylinderController.ShowTextInfo(predictMsg);
+                    yield return new WaitForSeconds(1.2f);
                 }
             }
+        }
+    }
+
+    private void ProcessArtifactBurnoutAndText()
+    {
+        if (_artifactManager != null)
+        {
+            _artifactManager.ProcessAndExtractBurnedOutItems(isEnemy: false, _cylinderController);
         }
     }
 

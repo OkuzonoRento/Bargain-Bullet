@@ -611,6 +611,7 @@ GameObject:
   - component: {fileID: 330585545}
   - component: {fileID: 330585544}
   - component: {fileID: 330585547}
+  - component: {fileID: 330585548}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -685,13 +686,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 330585543}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.3420201, y: 0, z: 0, w: 0.9396927}
+  m_LocalRotation: {x: 0.17364816, y: 0, z: 0, w: 0.9848078}
   m_LocalPosition: {x: 0, y: 9, z: -15}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 40, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 20, y: 0, z: 0}
 --- !u!114 &330585547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -736,6 +737,33 @@ MonoBehaviour:
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
   m_Version: 2
+--- !u!114 &330585548
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 330585543}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2846468901a7c9c46917efdfe375a4ca, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BattleCameraController
+  mainCameraTransform: {fileID: 330585546}
+  transitionDuration: 0.2
+  defaultView:
+    position: {x: 0, y: 9, z: -15}
+    eulerAngles: {x: 40, y: 0, z: 0}
+  selfView:
+    position: {x: 0, y: 9, z: -15}
+    eulerAngles: {x: 20, y: 0, z: 0}
+  opponentView:
+    position: {x: 0, y: 9, z: -15}
+    eulerAngles: {x: 20, y: 0, z: 0}
+  enableBreathing: 1
+  breathAmount: 0.005
+  breathSpeed: 2
+  blackoutPanel: {fileID: 0}
 --- !u!1001 &335002203
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -1101,13 +1129,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 580095676}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.7071068, y: 0, z: 0, w: 0.7071068}
+  m_LocalRotation: {x: 0.67559016, y: 0, z: 0, w: 0.7372774}
   m_LocalPosition: {x: 0, y: 10, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 90, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 85, y: 0, z: 0}
 --- !u!1 &677432708 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 919132149155446097, guid: c051a7a50796efe4ea33c8d1e0e838d1, type: 3}
@@ -1546,6 +1574,7 @@ MonoBehaviour:
   _artifactManager: {fileID: 1012479635}
   _playerLanternController: {fileID: 931359630}
   _enemyLanternController: {fileID: 511836312}
+  _battleCameraController: {fileID: 330585548}
   _playerHp: 2
   _enemyHp: 2
   _currentTurn: 0
@@ -1860,7 +1889,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!4 &1139866834
 Transform:
   m_ObjectHideFlags: 0
