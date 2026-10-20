@@ -1,12 +1,16 @@
+ï»¿using System;
 using System.Collections;
 using UnityEngine;
-using UnityEngine.UI;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal; // URPç”¨
 
 public class BattleCameraController : MonoBehaviour
 {
-    [Header("ƒJƒƒ‰–{‘Ì‚ÌQÆ")]
-    [SerializeField] private Transform mainCameraTransform;   // “®‚©‚·ƒJƒƒ‰iMain Camera“™j
-    [SerializeField, Range(0.05f, 0.5f)] private float transitionDuration = 0.25f; // ƒJƒƒ‰Ø‘ÖŠÔ
+    [Header("ã‚«ãƒ¡ãƒ©æœ¬ä½“ã®å‚ç…§")]
+    [SerializeField] private Transform mainCameraTransform;
+
+    [Header("ã‚«ãƒ¡ãƒ©åˆ‡æ›¿ãƒ»å¾©å¸°ã®é€Ÿåº¦")]
+    [SerializeField, Range(0.1f, 2.0f)] private float transitionDuration = 1.0f;
 
     [System.Serializable]
     public struct CameraViewData
@@ -22,35 +26,74 @@ public class BattleCameraController : MonoBehaviour
         }
     }
 
-    [Header("Še‹“_‚ÌˆÊ’u‚ÆŠp“x")]
+    [Header("å„è¦–ç‚¹ã®ä½ç½®ã¨è§’åº¦")]
     [SerializeField] private CameraViewData defaultView = new CameraViewData { position = new Vector3(0, 2, -5), eulerAngles = new Vector3(15, 0, 0) };
     [SerializeField] private CameraViewData selfView = new CameraViewData { position = new Vector3(0, 1.4f, -1.8f), eulerAngles = new Vector3(12, 0, 0) };
     [SerializeField] private CameraViewData opponentView = new CameraViewData { position = new Vector3(0, 2.2f, -5.5f), eulerAngles = new Vector3(18, 180, 0) };
 
-    [Header("ƒŠƒAƒ‹‚È‰‰oİ’è")]
-    [SerializeField] private bool enableBreathing = true;       // ŒÄ‹z‚Ì‚æ‚¤‚È”÷×‚È—h‚ê
-    [SerializeField] private float breathAmount = 0.005f;       // —h‚ê‚Ì‘å‚«‚³
-    [SerializeField] private float breathSpeed = 2.0f;          // —h‚ê‚Ì‘¬‚³
+    [Header("ãƒªã‚¢ãƒ«ãªæ¼”å‡ºè¨­å®š")]
+    [SerializeField] private bool enableBreathing = true;
+    [SerializeField] private float breathAmount = 0.005f;
+    [SerializeField] private float breathSpeed = 2.0f;
 
-    [Header("ˆÃ“]‰‰o—pUI")]
-    [SerializeField] private Image blackoutPanel;
+    [Header("BGMãƒ»ã‚ªãƒ¼ãƒ‡ã‚£ã‚ªæ¼”å‡ºè¨­å®š")]
+    [SerializeField] private AudioSource bgmAudioSource;
+    [SerializeField] private AudioLowPassFilter bgmLowPassFilter;
+    private float _defaultBgmVolume = 1.0f;
+
+    // ã‚¯ãƒªãƒƒãƒ—ã”ã¨ã«å€‹åˆ¥ã®éŸ³é‡å€ç‡ã‚’æŒãŸã›ã‚‹ãŸã‚ã®ãƒ‡ãƒ¼ã‚¿æ§‹é€ 
+    [Serializable]
+    public struct SoundData
+    {
+        public AudioClip clip;
+        [Range(0f, 2f)] public float volumeMultiplier; // ã“ã®ã‚¯ãƒªãƒƒãƒ—å°‚ç”¨ã®éŸ³é‡å€ç‡
+    }
+
+    [Header("ç™»éŒ²ã•ã‚ŒãŸéŠƒå£°ã‚¯ãƒªãƒƒãƒ—ã¨éŸ³é‡è¨­å®š")]
+    [SerializeField] private SoundData realShotSound;  // å®Ÿå¼¾ç”¨
+    [SerializeField] private SoundData blankShotSound; // ç©ºç ²ç”¨
+
+    [Header("æš—è»¢ãƒ»ãƒ”ãƒ³ãƒˆæ¼”å‡ºç”¨ URP Volume ã®è¨­å®š")]
+    [SerializeField] private Volume blackoutVolume;
+    private ColorAdjustments _colorAdjustments;
+    private DepthOfField _depthOfField;
 
     private Coroutine _cameraMoveRoutine;
     private Coroutine _recoilRoutine;
     private CameraViewData _currentTargetView;
     private bool _isMoving = false;
 
-    // š ŠO•”‚©‚çƒJƒƒ‰‚ªˆÚ“®’†‚©‚Ç‚¤‚©‚ğŠm”F‚·‚é‚½‚ß‚ÌƒvƒƒpƒeƒB
+    // éŸ³é‡ã‚’ç¢ºå®Ÿã«åæ˜ ã•ã›ã‚‹ãŸã‚ã®å†…éƒ¨ç”¨AudioSource
+    private AudioSource _sfxInternalSource;
+
     public bool IsMoving => _isMoving;
 
     private void Start()
     {
         _currentTargetView = defaultView;
+
+        if (bgmAudioSource != null)
+        {
+            _defaultBgmVolume = bgmAudioSource.volume;
+        }
+
+        if (blackoutVolume != null && blackoutVolume.profile != null)
+        {
+            blackoutVolume.profile.TryGet(out _colorAdjustments);
+            blackoutVolume.profile.TryGet(out _depthOfField);
+        }
+
+        // ã‚¹ã‚¯ãƒªãƒ—ãƒˆå´ã§è‡ªå‹•çš„ã«SEç”¨ã®AudioSourceã‚’ã‚¢ã‚¿ãƒƒãƒï¼ˆæ‰‹å‹•ã‚¢ã‚¿ãƒƒãƒä¸è¦ï¼‰
+        _sfxInternalSource = gameObject.GetComponent<AudioSource>();
+        if (_sfxInternalSource == null)
+        {
+            _sfxInternalSource = gameObject.AddComponent<AudioSource>();
+        }
+        _sfxInternalSource.spatialBlend = 0f; // 2Dã‚µã‚¦ãƒ³ãƒ‰ï¼ˆç©ºé–“æ¸›è¡°ãªã—ã§æŒ‡å®šã—ãŸéŸ³é‡ã‚’100%æ­£ç¢ºã«å‡ºåŠ›ï¼‰
     }
 
     private void Update()
     {
-        // ƒJƒƒ‰‚ªˆÚ“®’†‚â”½“®’†‚Å‚È‚¯‚ê‚ÎAŒÄ‹z‚Ì—h‚ê‚ğ‰Á‚¦‚é
         if (enableBreathing && !_isMoving && _recoilRoutine == null && mainCameraTransform != null)
         {
             float noiseX = Mathf.Sin(Time.time * breathSpeed) * breathAmount;
@@ -61,22 +104,9 @@ public class BattleCameraController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// ‘ÎÛ‚É‰‚¶‚½ƒJƒƒ‰ƒ[ƒN‚ÌØ‚è‘Ö‚¦
-    /// </summary>
     public void SwitchCameraForTarget(bool targetIsEnemy, bool isShootingSelf)
     {
-        CameraViewData targetView = defaultView;
-
-        if (isShootingSelf)
-        {
-            targetView = selfView;
-        }
-        else
-        {
-            targetView = targetIsEnemy ? opponentView : selfView;
-        }
-
+        CameraViewData targetView = isShootingSelf ? selfView : (targetIsEnemy ? opponentView : selfView);
         _currentTargetView = targetView;
 
         if (mainCameraTransform != null)
@@ -86,7 +116,7 @@ public class BattleCameraController : MonoBehaviour
             if (transitionDuration > 0f)
             {
                 if (_cameraMoveRoutine != null) StopCoroutine(_cameraMoveRoutine);
-                _cameraMoveRoutine = StartCoroutine(MoveCameraSmoothly(targetView.position, Quaternion.Euler(targetView.eulerAngles)));
+                _cameraMoveRoutine = StartCoroutine(MoveCameraSmoothly(targetView.position, Quaternion.Euler(targetView.eulerAngles), transitionDuration));
             }
             else
             {
@@ -95,9 +125,6 @@ public class BattleCameraController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// ’Êí‹“_‚É–ß‚·
-    /// </summary>
     public void ResetCamera()
     {
         _currentTargetView = defaultView;
@@ -109,7 +136,7 @@ public class BattleCameraController : MonoBehaviour
             if (transitionDuration > 0f)
             {
                 if (_cameraMoveRoutine != null) StopCoroutine(_cameraMoveRoutine);
-                _cameraMoveRoutine = StartCoroutine(MoveCameraSmoothly(defaultView.position, Quaternion.Euler(defaultView.eulerAngles)));
+                _cameraMoveRoutine = StartCoroutine(MoveCameraSmoothly(defaultView.position, Quaternion.Euler(defaultView.eulerAngles), transitionDuration));
             }
             else
             {
@@ -118,18 +145,17 @@ public class BattleCameraController : MonoBehaviour
         }
     }
 
-    private IEnumerator MoveCameraSmoothly(Vector3 targetPos, Quaternion targetRot)
+    private IEnumerator MoveCameraSmoothly(Vector3 targetPos, Quaternion targetRot, float duration)
     {
         _isMoving = true;
         float elapsed = 0f;
         Vector3 startPos = mainCameraTransform.position;
         Quaternion startRot = mainCameraTransform.rotation;
 
-        while (elapsed < transitionDuration)
+        while (elapsed < duration)
         {
             elapsed += Time.deltaTime;
-            float t = elapsed / transitionDuration;
-            t = Mathf.SmoothStep(0f, 1f, t);
+            float t = Mathf.SmoothStep(0f, 1f, elapsed / duration);
 
             mainCameraTransform.position = Vector3.Lerp(startPos, targetPos, t);
             mainCameraTransform.rotation = Quaternion.Slerp(startRot, targetRot, t);
@@ -141,9 +167,6 @@ public class BattleCameraController : MonoBehaviour
         _isMoving = false;
     }
 
-    /// <summary>
-    /// Œ‚‚Á‚½‚Æ‚«A‚Ü‚½‚ÍŒ‚‚½‚ê‚½‚Æ‚«‚Ì‹­—Í‚È”½“®i‹“_‚Í–ß‚³‚¸A‚»‚Ìê‚Å—h‚ê‚½‚Ü‚ÜˆÛ‚·‚éj
-    /// </summary>
     public void PlayRecoil(bool isHeavyHit = false)
     {
         if (_recoilRoutine != null) StopCoroutine(_recoilRoutine);
@@ -155,21 +178,17 @@ public class BattleCameraController : MonoBehaviour
         if (mainCameraTransform == null) yield break;
 
         Quaternion startRot = mainCameraTransform.rotation;
-        // Œ‚‚½‚ê‚½i”í’ej‚â‹­—Í‚È”­–C‚Í”½“®‚ğ‘å‚«‚­‚·‚é
         float pitchPunch = isHeavyHit ? -8f : -4f;
         float yawPunch = UnityEngine.Random.Range(-3f, 3f);
-
         Quaternion peakRot = startRot * Quaternion.Euler(pitchPunch, yawPunch, UnityEngine.Random.Range(-2f, 2f));
 
         float elapsed = 0f;
-        float punchDuration = 0.08f; // ˆê‹C‚É’µ‚Ëã‚ª‚éŠÔ
+        float punchDuration = 0.08f;
 
-        // 1. u‚ÉƒKƒNƒb‚Æ’µ‚Ëã‚ª‚é
         while (elapsed < punchDuration)
         {
             elapsed += Time.deltaTime;
-            float t = elapsed / punchDuration;
-            mainCameraTransform.rotation = Quaternion.Slerp(startRot, peakRot, t);
+            mainCameraTransform.rotation = Quaternion.Slerp(startRot, peakRot, elapsed / punchDuration);
             yield return null;
         }
 
@@ -178,40 +197,134 @@ public class BattleCameraController : MonoBehaviour
     }
 
     /// <summary>
-    /// ©•ª‚ÉÀ’e‚ª“–‚½‚Á‚½‚Æ‚«‚Ìƒp[ƒgƒi[E^‚ÁˆÃ‚É‚È‚Á‚Ä‚©‚ç‹}‚É–Ú‚ğŠo‚Ü‚·‰‰o
+    /// è¨­å®šã•ã‚ŒãŸã‚¯ãƒªãƒƒãƒ—ã¨Volume Multiplierã®éŸ³é‡ã‚’100%ç¢ºå®Ÿã«åæ˜ ã—ã¦éŠƒå£°ã‚’é³´ã‚‰ã™
+    /// </summary>
+    public void PlayGunshot(bool isRealShot)
+    {
+        SoundData targetSound = isRealShot ? realShotSound : blankShotSound;
+
+        if (targetSound.clip != null)
+        {
+            if (_sfxInternalSource == null)
+            {
+                _sfxInternalSource = gameObject.GetComponent<AudioSource>();
+                if (_sfxInternalSource == null) _sfxInternalSource = gameObject.AddComponent<AudioSource>();
+            }
+
+            // PlayOneShotã§æŒ‡å®šã—ãŸå€ç‡ï¼ˆ0.01ãªã©ï¼‰ã®éŸ³é‡ã‚’ç¢ºå®Ÿã«é©ç”¨ã—ã¦å†ç”Ÿ
+            _sfxInternalSource.PlayOneShot(targetSound.clip, targetSound.volumeMultiplier);
+        }
+    }
+
+    /// <summary>
+    /// æš—è»¢ â” ãƒ”ãƒ³ãƒˆãŒåˆã£ã¦ã‹ã‚‰ã€ã‚†ã£ãã‚Šã¨ã‚«ãƒ¡ãƒ©ä½ç½®ã‚’ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã«æˆ»ã™æ¼”å‡º
     /// </summary>
     public IEnumerator PlayBlackoutWakeUpRoutine()
     {
-        if (blackoutPanel == null) yield break;
-
-        // ”í’e‚Ì‘å‚«‚È”½“®‚à‚ ‚í‚¹‚Ä”­¶‚³‚¹‚é
         PlayRecoil(isHeavyHit: true);
 
-        // 1. uŠÔ“I‚É‰æ–Ê‚ğ^‚ÁˆÃ‚É‚·‚é
-        Color col = blackoutPanel.color;
-        col.a = 1f;
-        blackoutPanel.color = col;
-        blackoutPanel.gameObject.SetActive(true);
+        // -------------------------------------------------------------
+        // Step 1: ä¸€ç¬ã§å®Œå…¨ãªé»’ã«ã™ã‚‹ï¼ˆçŸ­ã‚ã®æš—è»¢ï¼‰
+        // -------------------------------------------------------------
+        if (_colorAdjustments != null)
+        {
+            _colorAdjustments.postExposure.overrideState = true;
+            _colorAdjustments.postExposure.value = -20f;
+        }
 
-        // 2. ˆÃˆÅ‚Ì’†‚Å­‚µ‘Ò‚Âi‹Câ‚µ‚Ä‚¢‚éŠÔj
-        yield return new WaitForSeconds(0.6f);
+        if (_depthOfField != null)
+        {
+            _depthOfField.active = true;
+            _depthOfField.focusDistance.overrideState = true;
+            _depthOfField.focusDistance.value = 0.1f;
+        }
 
-        // 3. ‹}‚É–Ú‚ğŠo‚Ü‚·‚æ‚¤‚ÉƒXƒb‚Æ‹ŠE‚ªŠJ‚¯‚é
+        if (bgmAudioSource != null)
+        {
+            bgmAudioSource.volume = 0f;
+            if (bgmLowPassFilter != null) bgmLowPassFilter.cutoffFrequency = 400f;
+        }
+
+        yield return new WaitForSeconds(0.4f);
+
+        // -------------------------------------------------------------
+        // Step 2: ç›®ãŒè¦šã‚ã¦ã€æ˜ã‚‹ããªã‚ŠãªãŒã‚‰ãƒ”ãƒ³ãƒˆãŒåˆã£ã¦ã„ã
+        // -------------------------------------------------------------
+        float wakeUpDuration = 1.2f;
         float elapsed = 0f;
-        float duration = 0.25f;
+        float loudBgmVolume = _defaultBgmVolume * 1.5f;
 
-        while (elapsed < duration)
+        if (bgmAudioSource != null)
+        {
+            bgmAudioSource.volume = loudBgmVolume;
+        }
+
+        float startExposure = -20f;
+        float targetExposure = 0f;
+
+        float startFocus = 0.1f;
+        float targetFocus = 10f;
+
+        while (elapsed < wakeUpDuration)
         {
             elapsed += Time.deltaTime;
-            float t = elapsed / duration;
-            t = Mathf.Sin(t * Mathf.PI * 0.5f);
-            col.a = Mathf.Lerp(1f, 0f, t);
-            blackoutPanel.color = col;
+            float t = elapsed / wakeUpDuration;
+            float smoothT = Mathf.SmoothStep(0f, 1f, t);
+
+            if (_colorAdjustments != null)
+            {
+                _colorAdjustments.postExposure.value = Mathf.Lerp(startExposure, targetExposure, smoothT);
+            }
+
+            if (_depthOfField != null)
+            {
+                _depthOfField.focusDistance.value = Mathf.Lerp(startFocus, targetFocus, smoothT);
+            }
+
+            if (bgmAudioSource != null)
+            {
+                bgmAudioSource.volume = Mathf.Lerp(loudBgmVolume, _defaultBgmVolume, smoothT);
+
+                if (bgmLowPassFilter != null)
+                {
+                    bgmLowPassFilter.cutoffFrequency = Mathf.Lerp(400f, 22000f, smoothT);
+                }
+            }
+
             yield return null;
         }
 
-        col.a = 0f;
-        blackoutPanel.color = col;
-        blackoutPanel.gameObject.SetActive(false);
+        // å®Œå…¨ã«ãƒ”ãƒ³ãƒˆãŒåˆã„ã€æ˜ã‚‹ããªã£ãŸçŠ¶æ…‹ã‚’ç¢ºå®š
+        if (_colorAdjustments != null) _colorAdjustments.postExposure.value = targetExposure;
+        if (_depthOfField != null) _depthOfField.focusDistance.value = targetFocus;
+
+        if (bgmAudioSource != null)
+        {
+            bgmAudioSource.volume = _defaultBgmVolume;
+        }
+        if (bgmLowPassFilter != null)
+        {
+            bgmLowPassFilter.cutoffFrequency = 22000f;
+        }
+
+        // -------------------------------------------------------------
+        // Step 3: ãƒ”ãƒ³ãƒˆãŒå®Œå…¨ã«åˆã£ãŸã‚ã¨ã«ã€ã‚«ãƒ¡ãƒ©ã®ä½ç½®ã‚’ã‚†ã£ãã‚Šæˆ»ã™
+        // -------------------------------------------------------------
+        _currentTargetView = defaultView;
+
+        if (mainCameraTransform != null)
+        {
+            if (_recoilRoutine != null) { StopCoroutine(_recoilRoutine); _recoilRoutine = null; }
+
+            if (_cameraMoveRoutine != null) StopCoroutine(_cameraMoveRoutine);
+
+            float returnDuration = 1.2f;
+            _cameraMoveRoutine = StartCoroutine(MoveCameraSmoothly(defaultView.position, Quaternion.Euler(defaultView.eulerAngles), returnDuration));
+        }
+
+        while (_isMoving)
+        {
+            yield return null;
+        }
     }
 }

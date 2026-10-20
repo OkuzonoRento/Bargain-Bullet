@@ -1,4 +1,4 @@
-using BargainBullet.Artifacts;
+ï»¿using BargainBullet.Artifacts;
 using BargainBullet.Core;
 using BargainBullet.Economy;
 using System.Collections;
@@ -9,58 +9,78 @@ public enum BattleTurn { Player, Enemy }
 
 public class BattleManager : MonoBehaviour
 {
-    [Header("QÆ")]
+    [Header("å‚ç…§")]
     [SerializeField] private CylinderController _cylinderController;
     [SerializeField] private BattleAI _battleAI;
+    [SerializeField] private EnemyController _enemyController;
 
-    [Header("ƒA[ƒeƒBƒtƒ@ƒNƒgŠÇ—")]
+    [Header("ã‚¢ãƒ¼ãƒ†ã‚£ãƒ•ã‚¡ã‚¯ãƒˆç®¡ç†")]
     [SerializeField] private ArtifactManager _artifactManager;
 
-    [Header("ƒ‰ƒ“ƒ^ƒ“UIQÆ")]
+    [Header("ãƒ©ãƒ³ã‚¿ãƒ³UIå‚ç…§")]
     [SerializeField] private LanternHealthController _playerLanternController;
     [SerializeField] private LanternHealthController _enemyLanternController;
 
-    [Header("ƒJƒƒ‰E‰‰o§Œä")]
+    [Header("ã‚«ãƒ¡ãƒ©ãƒ»æ¼”å‡ºåˆ¶å¾¡")]
     [SerializeField] private BattleCameraController _battleCameraController;
 
-    [Header("ƒXƒe[ƒ^ƒX")]
+    [Header("ã‚µã‚¦ãƒ³ãƒ‰è¨­å®š")]
+    [SerializeField] private AudioClip _realShootSE;   // å®Ÿå¼¾ç™ºç ²æ™‚ã®SE
+    [SerializeField] private AudioClip _blankShootSE;  // ç©ºç ²ç™ºç ²æ™‚ã®SE
+    private AudioSource _audioSource;
+
+    [Header("ã‚¹ãƒ†ãƒ¼ã‚¿ã‚¹")]
     [SerializeField, Min(2)] private int _playerHp = 2;
     [SerializeField, Min(2)] private int _enemyHp = 2;
     private int _maxHp;
     private int _consecutiveBlanks = 0;
 
-    [Header("ó‘Ô")]
+    [Header("çŠ¶æ…‹")]
     [SerializeField] private BattleTurn _currentTurn = BattleTurn.Player;
-    private bool _isInputLocked = true; // ‰Šúó‘Ô‚ÍƒƒbƒN‚µ‚Ä‚¨‚­
+    private bool _isInputLocked = true;
+
+    // ã‚¢ãƒ‹ãƒ¡ãƒ¼ã‚·ãƒ§ãƒ³çµ‚äº†ãƒ•ãƒ©ã‚°
+    private bool _isAnimFinished = false;
 
     private void Start()
     {
+        _audioSource = GetComponent<AudioSource>();
+        if (_audioSource == null)
+        {
+            _audioSource = gameObject.AddComponent<AudioSource>();
+        }
+
         if (_artifactManager != null)
         {
             _artifactManager.OnBurnOutDamageToEnemy += amount => ApplyDamageToEnemy(amount);
         }
+
+        if (_enemyController != null)
+        {
+            _enemyController.OnActionAnimationFinished += () => _isAnimFinished = true;
+            _enemyController.OnReloadAnimationFinished += () => _isAnimFinished = true;
+        }
+
         BattleSetup();
     }
 
     public void BattleSetup()
     {
+        _isInputLocked = true;
         _maxHp = Random.Range(2, 6);
         _playerHp = _maxHp;
         _enemyHp = _maxHp;
         _consecutiveBlanks = 0;
 
-        if (_cylinderController != null) _cylinderController.SetCylinder();
         if (_battleCameraController != null) _battleCameraController.ResetCamera();
 
         UpdateLanterns();
-
         _currentTurn = BattleTurn.Player;
 
-        // ƒZƒbƒgƒAƒbƒv‚àƒJƒƒ‰‚Ì‰Šú‰»‚Æƒ^[ƒ“ŠJnƒeƒLƒXƒg‚ÌI—¹‚ğ‘Ò‚Á‚Ä‚©‚ç“ü—Í‚ğ‰ğ‹Ö
-        StartCoroutine(WaitInitialSetupAndUnlockInput());
+        StartCoroutine(InitialSetupRoutine());
     }
 
-    private IEnumerator WaitInitialSetupAndUnlockInput()
+    private IEnumerator InitialSetupRoutine()
     {
         _isInputLocked = true;
 
@@ -69,15 +89,32 @@ public class BattleManager : MonoBehaviour
             while (_battleCameraController.IsMoving) yield return null;
         }
 
-        yield return new WaitForSeconds(0.2f);
+        _isAnimFinished = false;
+        if (_enemyController != null)
+        {
+            _enemyController.PlayReloadAnimation();
+        }
 
-        // C³Fyield return ‚É•ÏX
+        if (_cylinderController != null)
+        {
+            _cylinderController.SetCylinder();
+        }
+
+        float timer = 0f;
+        while (!_isAnimFinished && timer < 2.5f)
+        {
+            timer += Time.deltaTime;
+            yield return null;
+        }
+
+        yield return new WaitForSeconds(0.5f);
+
         yield return StartCoroutine(NotifyTurnStartRoutine());
 
         _isInputLocked = false;
     }
 
-    #region Action Endpoints
+    #region Action Endpoints (Player & Enemy Input triggers)
 
     public void OnPlayerShootSelf()
     {
@@ -90,7 +127,7 @@ public class BattleManager : MonoBehaviour
             _battleCameraController.PlayRecoil(isHeavyHit: false);
         }
 
-        ExecuteShoot(targetIsEnemy: false, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Player);
+        StartCoroutine(ExecuteShootRoutine(targetIsEnemy: false, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Player));
     }
 
     public void OnPlayerShootOpponent()
@@ -104,59 +141,76 @@ public class BattleManager : MonoBehaviour
             _battleCameraController.PlayRecoil(isHeavyHit: false);
         }
 
-        ExecuteShoot(targetIsEnemy: true, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Enemy);
+        StartCoroutine(ExecuteShootRoutine(targetIsEnemy: true, nextTurnIfHit: BattleTurn.Enemy, nextTurnIfMiss: BattleTurn.Enemy));
     }
 
     public void OnEnemyShootSelf()
     {
         if (_currentTurn == BattleTurn.Enemy)
-            ExecuteShoot(targetIsEnemy: true, nextTurnIfHit: BattleTurn.Player, nextTurnIfMiss: BattleTurn.Enemy);
+        {
+            _isAnimFinished = false;
+            if (_enemyController != null)
+            {
+                _enemyController.PlayMyShotAnimation();
+            }
+            StartCoroutine(ExecuteShootTargetForEnemyRoutine(isShootingEnemySelf: true));
+        }
     }
 
     public void OnEnemyShootOpponent()
     {
         if (_currentTurn == BattleTurn.Enemy)
-            ExecuteShoot(targetIsEnemy: false, nextTurnIfHit: BattleTurn.Player, nextTurnIfMiss: BattleTurn.Player);
+        {
+            _isAnimFinished = false;
+            if (_enemyController != null)
+            {
+                _enemyController.PlayShotAnimation();
+            }
+            StartCoroutine(ExecuteShootTargetForEnemyRoutine(isShootingEnemySelf: false));
+        }
     }
 
     #endregion
 
-    private void ExecuteShoot(bool targetIsEnemy, BattleTurn nextTurnIfHit, BattleTurn nextTurnIfMiss)
+    private IEnumerator ExecuteShootRoutine(bool targetIsEnemy, BattleTurn nextTurnIfHit, BattleTurn nextTurnIfMiss)
     {
-        bool isEnemyTurn = (_currentTurn == BattleTurn.Enemy);
+        yield return new WaitForSeconds(0.5f);
+
+        bool isEnemyTurn = false;
 
         if (_artifactManager != null)
         {
             int dueDamage = _artifactManager.OnShotExecuted(isEnemyTurn);
             if (dueDamage > 0)
             {
-                if (isEnemyTurn) ApplyDamageToEnemy(dueDamage);
-                else ApplyDirectDamageToPlayer(dueDamage);
-                if (_playerHp <= 0 || _enemyHp <= 0) return;
+                if (targetIsEnemy)
+                {
+                    PlayShootSE(true);
+                    _isAnimFinished = false;
+                    if (_enemyController != null) _enemyController.PlayHitAnimation();
+                    ApplyDamageToEnemy(dueDamage);
+                }
+                else
+                {
+                    PlayShootSE(true);
+                    ApplyDirectDamageToPlayer(dueDamage);
+                }
+                if (_playerHp <= 0 || _enemyHp <= 0) yield break;
             }
 
-            if (!isEnemyTurn && !targetIsEnemy)
+            if (!targetIsEnemy && _artifactManager.CheckJamSelfReal(isEnemy: false))
             {
-                if (_artifactManager.CheckJamSelfReal(isEnemy: false))
-                {
-                    Debug.Log("[Artifact] ƒWƒƒƒ€”­“®I");
-                    ChangeTurn(BattleTurn.Player);
-                    return;
-                }
-            }
-            else if (isEnemyTurn && targetIsEnemy)
-            {
-                if (_artifactManager.CheckJamSelfReal(isEnemy: true))
-                {
-                    Debug.Log("[Artifact] “G‚ÌƒWƒƒƒ€”­“®I");
-                    ChangeTurn(BattleTurn.Enemy);
-                    return;
-                }
+                Debug.Log("[Artifact] ã‚¸ãƒ£ãƒ ç™ºå‹•ï¼");
+                ChangeTurn(BattleTurn.Player);
+                yield break;
             }
         }
 
-        // ÀÛ‚Ì’e‚Ì”­ËE”»’è
         bool isReal = _cylinderController.GetShot();
+
+        yield return new WaitForSeconds(0.3f);
+
+        PlayShootSE(isReal);
 
         if (isReal)
         {
@@ -170,16 +224,32 @@ public class BattleManager : MonoBehaviour
 
             if (targetIsEnemy)
             {
-                if (isEnemyTurn) ApplyDirectDamageToPlayer(damage);
-                else ApplyDamageToEnemy(damage);
+                _isAnimFinished = false;
+                if (_enemyController != null)
+                {
+                    _enemyController.PlayHitAnimation();
+                }
+
+                float timer = 0f;
+                while (!_isAnimFinished && timer < 2.0f)
+                {
+                    timer += Time.deltaTime;
+                    yield return null;
+                }
+
+                ApplyDamageToEnemy(damage);
+                if (_enemyHp > 0) ChangeTurn(nextTurnIfHit);
             }
             else
             {
-                if (isEnemyTurn) ApplyDamageToEnemy(damage);
-                else ApplyDirectDamageToPlayer(damage);
-            }
+                if (_battleCameraController != null)
+                {
+                    yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
+                }
 
-            if (_playerHp > 0 && _enemyHp > 0) ChangeTurn(nextTurnIfHit);
+                ApplyDirectDamageToPlayer(damage);
+                if (_playerHp > 0) ChangeTurn(nextTurnIfHit);
+            }
         }
         else
         {
@@ -190,11 +260,132 @@ public class BattleManager : MonoBehaviour
                 int heal = _artifactManager.CheckHealOnSelfBlank(isEnemyTurn);
                 if (heal > 0)
                 {
-                    if (isEnemyTurn) _enemyHp = Mathf.Min(_maxHp, _enemyHp + heal);
-                    else _playerHp = Mathf.Min(_maxHp, _playerHp + heal);
+                    _playerHp = Mathf.Min(_maxHp, _playerHp + heal);
                 }
             }
             ChangeTurn(nextTurnIfMiss);
+        }
+    }
+
+    private IEnumerator ExecuteShootTargetForEnemyRoutine(bool isShootingEnemySelf)
+    {
+        float timer = 0f;
+        while (!_isAnimFinished && timer < 2.5f)
+        {
+            timer += Time.deltaTime;
+            yield return null;
+        }
+
+        yield return new WaitForSeconds(0.2f);
+
+        bool isEnemyTurn = true;
+
+        if (_artifactManager != null)
+        {
+            int dueDamage = _artifactManager.OnShotExecuted(isEnemyTurn);
+            if (dueDamage > 0)
+            {
+                if (isShootingEnemySelf)
+                {
+                    PlayShootSE(true);
+                    _isAnimFinished = false;
+                    if (_enemyController != null) _enemyController.PlayHitAnimation();
+                    ApplyDamageToEnemy(dueDamage);
+                }
+                else
+                {
+                    PlayShootSE(true);
+                    if (_battleCameraController != null)
+                    {
+                        yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
+                    }
+                    ApplyDirectDamageToPlayer(dueDamage);
+                }
+                if (_playerHp <= 0 || _enemyHp <= 0) yield break;
+            }
+
+            if (isShootingEnemySelf && _artifactManager.CheckJamSelfReal(isEnemy: true))
+            {
+                Debug.Log("[Artifact] æ•µã®ã‚¸ãƒ£ãƒ ç™ºå‹•ï¼");
+                ChangeTurn(BattleTurn.Enemy);
+                yield break;
+            }
+        }
+
+        bool isReal = _cylinderController.GetShot();
+
+        yield return new WaitForSeconds(0.3f);
+
+        PlayShootSE(isReal);
+
+        if (isReal)
+        {
+            _consecutiveBlanks = 0;
+            int damage = 1;
+
+            if (_artifactManager != null)
+            {
+                damage = _artifactManager.ProcessOutgoingDamage(damage, isEnemyTurn);
+            }
+
+            if (isShootingEnemySelf)
+            {
+                _isAnimFinished = false;
+                if (_enemyController != null)
+                {
+                    _enemyController.PlayHitAnimation();
+                }
+
+                timer = 0f;
+                while (!_isAnimFinished && timer < 2.0f)
+                {
+                    timer += Time.deltaTime;
+                    yield return null;
+                }
+
+                ApplyDamageToEnemy(damage);
+                if (_enemyHp > 0 && _playerHp > 0) ChangeTurn(BattleTurn.Player);
+            }
+            else
+            {
+                if (_battleCameraController != null)
+                {
+                    yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
+                }
+
+                ApplyDirectDamageToPlayer(damage);
+                if (_enemyHp > 0 && _playerHp > 0) ChangeTurn(BattleTurn.Player);
+            }
+        }
+        else
+        {
+            _consecutiveBlanks++;
+            if (_artifactManager != null)
+            {
+                _artifactManager.CheckCoolAdjacentOnSelfBlank(isEnemyTurn);
+                int heal = _artifactManager.CheckHealOnSelfBlank(isEnemyTurn);
+                if (heal > 0)
+                {
+                    _enemyHp = Mathf.Min(_maxHp, _enemyHp + heal);
+                }
+            }
+
+            BattleTurn nextTurn = isShootingEnemySelf ? BattleTurn.Enemy : BattleTurn.Player;
+            ChangeTurn(nextTurn);
+        }
+    }
+
+    private void PlayShootSE(bool isReal)
+    {
+        if (_audioSource == null) return;
+
+        if (isReal && _realShootSE != null)
+        {
+            _audioSource.PlayOneShot(_realShootSE);
+        }
+        else if (!isReal && _blankShootSE != null)
+        {
+            _audioSource.PlayOneShot(_blankShootSE);
         }
     }
 
@@ -208,21 +399,12 @@ public class BattleManager : MonoBehaviour
             finalDamage = damageReflectResult.Item1;
             int reflect = damageReflectResult.Item2;
 
-            if (reflect > 0)
-            {
-                ApplyDamageToEnemy(reflect);
-            }
+            if (reflect > 0) ApplyDamageToEnemy(reflect);
         }
 
         if (finalDamage > 0)
         {
-            if (_battleCameraController != null && !(_currentTurn == BattleTurn.Player && _cylinderController.RemainingBullets <= 0))
-            {
-                StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
-            }
-
             bool isFatal = (_playerHp - finalDamage) <= 0;
-
             if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection(isEnemy: false))
             {
                 _playerHp = 1;
@@ -236,7 +418,7 @@ public class BattleManager : MonoBehaviour
 
             if (_playerHp <= 0)
             {
-                Debug.LogWarning("ƒQ[ƒ€ƒI[ƒo[I");
+                Debug.LogWarning("ã‚²ãƒ¼ãƒ ã‚ªãƒ¼ãƒãƒ¼ï¼");
                 Invoke(nameof(BattleSetup), 3.0f);
             }
         }
@@ -252,16 +434,12 @@ public class BattleManager : MonoBehaviour
             finalDamage = damageReflectResult.Item1;
             int reflect = damageReflectResult.Item2;
 
-            if (reflect > 0)
-            {
-                ApplyDirectDamageToPlayer(reflect);
-            }
+            if (reflect > 0) ApplyDirectDamageToPlayer(reflect);
         }
 
         if (finalDamage > 0)
         {
             bool isFatal = (_enemyHp - finalDamage) <= 0;
-
             if (isFatal && _artifactManager != null && _artifactManager.CheckFatalProtection(isEnemy: true))
             {
                 _enemyHp = 1;
@@ -275,7 +453,7 @@ public class BattleManager : MonoBehaviour
 
             if (_enemyHp <= 0)
             {
-                Debug.LogWarning("Ÿ—˜I");
+                Debug.LogWarning("å‹åˆ©ï¼");
                 if (MoneyManager.Instance != null && _artifactManager != null)
                 {
                     bool hasBonus = _artifactManager.HasBonusInterestArtifact();
@@ -288,20 +466,16 @@ public class BattleManager : MonoBehaviour
 
     private void ChangeTurn(BattleTurn nextTurn)
     {
+        _isInputLocked = true;
+
         if (_cylinderController.RemainingBullets <= 0)
         {
-            _cylinderController.SetCylinder();
             if (_battleCameraController != null)
             {
                 _battleCameraController.ResetCamera();
-                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: true));
             }
-            else
-            {
-                ProcessArtifactBurnoutAndText();
-                _isInputLocked = false;
-            }
-            _currentTurn = BattleTurn.Player;
+
+            StartCoroutine(ReloadAndResetRoutine(BattleTurn.Player));
             return;
         }
 
@@ -322,8 +496,45 @@ public class BattleManager : MonoBehaviour
         }
     }
 
+    private IEnumerator ReloadAndResetRoutine(BattleTurn nextTurn)
+    {
+        if (_battleCameraController != null)
+        {
+            while (_battleCameraController.IsMoving) yield return null;
+        }
+
+        yield return new WaitForSeconds(0.2f);
+
+        _isAnimFinished = false;
+        if (_enemyController != null)
+        {
+            _enemyController.PlayReloadAnimation();
+        }
+
+        if (_cylinderController != null)
+        {
+            _cylinderController.SetCylinder();
+        }
+
+        float timer = 0f;
+        while (!_isAnimFinished && timer < 2.5f)
+        {
+            timer += Time.deltaTime;
+            yield return null;
+        }
+
+        yield return new WaitForSeconds(0.3f);
+
+        _currentTurn = nextTurn;
+
+        yield return StartCoroutine(NotifyTurnStartRoutine());
+        _isInputLocked = false;
+    }
+
     private IEnumerator WaitCameraAndProcessArtifactsRoutine(bool nextTurnIsPlayer)
     {
+        _isInputLocked = true;
+
         if (_battleCameraController != null)
         {
             while (_battleCameraController.IsMoving)
@@ -332,7 +543,7 @@ public class BattleManager : MonoBehaviour
             }
         }
 
-        yield return new WaitForSeconds(0.15f);
+        yield return new WaitForSeconds(0.2f);
 
         if (_artifactManager != null && !(_currentTurn == BattleTurn.Enemy && !nextTurnIsPlayer))
         {
@@ -350,7 +561,6 @@ public class BattleManager : MonoBehaviour
         }
         else
         {
-            // C³Fyield return ‚É•ÏX
             yield return StartCoroutine(NotifyTurnStartRoutine());
             _isInputLocked = false;
         }
@@ -363,22 +573,14 @@ public class BattleManager : MonoBehaviour
             if (_artifactManager.CheckPredictNextBullet())
             {
                 bool isNextReal = _cylinderController.PeekNextBullet();
-                string predictMsg = isNextReal ? "Ÿ‚ÍÀ’e‚È‹C‚ª‚·‚é" : "Ÿ‚Í‹ó–C‚È‹C‚ª‚·‚é";
+                string predictMsg = isNextReal ? "æ¬¡ã¯å®Ÿå¼¾ãªæ°—ãŒã™ã‚‹" : "æ¬¡ã¯ç©ºç ²ãªæ°—ãŒã™ã‚‹";
 
                 if (_cylinderController != null)
                 {
                     _cylinderController.ShowTextInfo(predictMsg);
-                    yield return new WaitForSeconds(1.2f);
+                    yield return new WaitForSeconds(1.5f);
                 }
             }
-        }
-    }
-
-    private void ProcessArtifactBurnoutAndText()
-    {
-        if (_artifactManager != null)
-        {
-            _artifactManager.ProcessAndExtractBurnedOutItems(isEnemy: false, _cylinderController);
         }
     }
 
@@ -390,7 +592,10 @@ public class BattleManager : MonoBehaviour
 
     private IEnumerator EnemyTurnRoutine()
     {
-        yield return new WaitForSeconds(1.0f);
+        _isInputLocked = true;
+
+        yield return new WaitForSeconds(0.8f);
+
         if (_battleAI == null || _cylinderController == null) yield break;
 
         AIAction action = _battleAI.DecideAction(
