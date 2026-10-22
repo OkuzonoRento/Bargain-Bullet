@@ -36,23 +36,6 @@ public class BattleCameraController : MonoBehaviour
     [SerializeField] private float breathAmount = 0.005f;
     [SerializeField] private float breathSpeed = 2.0f;
 
-    [Header("BGM・オーディオ演出設定")]
-    [SerializeField] private AudioSource bgmAudioSource;
-    [SerializeField] private AudioLowPassFilter bgmLowPassFilter;
-    private float _defaultBgmVolume = 1.0f;
-
-    // クリップごとに個別の音量倍率を持たせるためのデータ構造
-    [Serializable]
-    public struct SoundData
-    {
-        public AudioClip clip;
-        [Range(0f, 2f)] public float volumeMultiplier; // このクリップ専用の音量倍率
-    }
-
-    [Header("登録された銃声クリップと音量設定")]
-    [SerializeField] private SoundData realShotSound;  // 実弾用
-    [SerializeField] private SoundData blankShotSound; // 空砲用
-
     [Header("暗転・ピント演出用 URP Volume の設定")]
     [SerializeField] private Volume blackoutVolume;
     private ColorAdjustments _colorAdjustments;
@@ -63,33 +46,17 @@ public class BattleCameraController : MonoBehaviour
     private CameraViewData _currentTargetView;
     private bool _isMoving = false;
 
-    // 音量を確実に反映させるための内部用AudioSource
-    private AudioSource _sfxInternalSource;
-
     public bool IsMoving => _isMoving;
 
     private void Start()
     {
         _currentTargetView = defaultView;
 
-        if (bgmAudioSource != null)
-        {
-            _defaultBgmVolume = bgmAudioSource.volume;
-        }
-
         if (blackoutVolume != null && blackoutVolume.profile != null)
         {
             blackoutVolume.profile.TryGet(out _colorAdjustments);
             blackoutVolume.profile.TryGet(out _depthOfField);
         }
-
-        // スクリプト側で自動的にSE用のAudioSourceをアタッチ（手動アタッチ不要）
-        _sfxInternalSource = gameObject.GetComponent<AudioSource>();
-        if (_sfxInternalSource == null)
-        {
-            _sfxInternalSource = gameObject.AddComponent<AudioSource>();
-        }
-        _sfxInternalSource.spatialBlend = 0f; // 2Dサウンド（空間減衰なしで指定した音量を100%正確に出力）
     }
 
     private void Update()
@@ -197,22 +164,17 @@ public class BattleCameraController : MonoBehaviour
     }
 
     /// <summary>
-    /// 設定されたクリップとVolume Multiplierの音量を100%確実に反映して銃声を鳴らす
+    /// BgmManager 側の共通SE設定を参照して銃声を鳴らす
     /// </summary>
     public void PlayGunshot(bool isRealShot)
     {
-        SoundData targetSound = isRealShot ? realShotSound : blankShotSound;
-
-        if (targetSound.clip != null)
+        if (BgmManager.Instance != null)
         {
-            if (_sfxInternalSource == null)
-            {
-                _sfxInternalSource = gameObject.GetComponent<AudioSource>();
-                if (_sfxInternalSource == null) _sfxInternalSource = gameObject.AddComponent<AudioSource>();
-            }
-
-            // PlayOneShotで指定した倍率（0.01など）の音量を確実に適用して再生
-            _sfxInternalSource.PlayOneShot(targetSound.clip, targetSound.volumeMultiplier);
+            BgmManager.Instance.PlayGunshotSE(isRealShot);
+        }
+        else
+        {
+            Debug.LogWarning("BgmManagerが存在しないため、銃声を再生できません。");
         }
     }
 
@@ -239,10 +201,10 @@ public class BattleCameraController : MonoBehaviour
             _depthOfField.focusDistance.value = 0.1f;
         }
 
-        if (bgmAudioSource != null)
+        // BgmManager経由でBGMを完全遮断＆こもらせる
+        if (BgmManager.Instance != null)
         {
-            bgmAudioSource.volume = 0f;
-            if (bgmLowPassFilter != null) bgmLowPassFilter.cutoffFrequency = 400f;
+            BgmManager.Instance.SetBgmVolumeAndFilter(0f, 400f);
         }
 
         yield return new WaitForSeconds(0.4f);
@@ -252,11 +214,14 @@ public class BattleCameraController : MonoBehaviour
         // -------------------------------------------------------------
         float wakeUpDuration = 1.2f;
         float elapsed = 0f;
-        float loudBgmVolume = _defaultBgmVolume * 1.5f;
 
-        if (bgmAudioSource != null)
+        // BgmManagerから現在の設定音量を安全に取得して大音量演出に利用
+        float defaultBgmVol = (BgmManager.Instance != null) ? BgmManager.Instance.InGameBgmVolume : 0.1f;
+        float loudBgmVolume = defaultBgmVol * 1.5f;
+
+        if (BgmManager.Instance != null)
         {
-            bgmAudioSource.volume = loudBgmVolume;
+            BgmManager.Instance.SetBgmVolumeAndFilter(loudBgmVolume, 400f);
         }
 
         float startExposure = -20f;
@@ -281,14 +246,12 @@ public class BattleCameraController : MonoBehaviour
                 _depthOfField.focusDistance.value = Mathf.Lerp(startFocus, targetFocus, smoothT);
             }
 
-            if (bgmAudioSource != null)
-            {
-                bgmAudioSource.volume = Mathf.Lerp(loudBgmVolume, _defaultBgmVolume, smoothT);
+            float currentVol = Mathf.Lerp(loudBgmVolume, defaultBgmVol, smoothT);
+            float currentCutoff = Mathf.Lerp(400f, 22000f, smoothT);
 
-                if (bgmLowPassFilter != null)
-                {
-                    bgmLowPassFilter.cutoffFrequency = Mathf.Lerp(400f, 22000f, smoothT);
-                }
+            if (BgmManager.Instance != null)
+            {
+                BgmManager.Instance.SetBgmVolumeAndFilter(currentVol, currentCutoff);
             }
 
             yield return null;
@@ -298,13 +261,9 @@ public class BattleCameraController : MonoBehaviour
         if (_colorAdjustments != null) _colorAdjustments.postExposure.value = targetExposure;
         if (_depthOfField != null) _depthOfField.focusDistance.value = targetFocus;
 
-        if (bgmAudioSource != null)
+        if (BgmManager.Instance != null)
         {
-            bgmAudioSource.volume = _defaultBgmVolume;
-        }
-        if (bgmLowPassFilter != null)
-        {
-            bgmLowPassFilter.cutoffFrequency = 22000f;
+            BgmManager.Instance.SetBgmVolumeAndFilter(defaultBgmVol, 22000f);
         }
 
         // -------------------------------------------------------------
@@ -325,6 +284,45 @@ public class BattleCameraController : MonoBehaviour
         while (_isMoving)
         {
             yield return null;
+        }
+    }
+
+    /// <summary>
+    /// リロードやアニメーション切り替わりの瞬間に、まばたきするように一瞬だけ暗転して戻る演出
+    /// </summary>
+    public IEnumerator PlayBlinkRoutine()
+    {
+        // 1. 瞬間的に露出を下げる
+        if (_colorAdjustments != null)
+        {
+            _colorAdjustments.postExposure.overrideState = true;
+            _colorAdjustments.postExposure.value = -20f;
+        }
+
+        yield return new WaitForSeconds(0.15f);
+
+        // 2. スッと視界が戻る
+        float duration = 0.2f;
+        float elapsed = 0f;
+        float startExposure = -20f;
+        float targetExposure = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duration;
+            float smoothT = Mathf.SmoothStep(0f, 1f, t);
+
+            if (_colorAdjustments != null)
+            {
+                _colorAdjustments.postExposure.value = Mathf.Lerp(startExposure, targetExposure, smoothT);
+            }
+            yield return null;
+        }
+
+        if (_colorAdjustments != null)
+        {
+            _colorAdjustments.postExposure.value = targetExposure;
         }
     }
 }

@@ -4,6 +4,7 @@ using BargainBullet.Economy;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public enum BattleTurn { Player, Enemy }
 
@@ -89,25 +90,20 @@ public class BattleManager : MonoBehaviour
             while (_battleCameraController.IsMoving) yield return null;
         }
 
-        _isAnimFinished = false;
+        // 人間のリロードアニメーションを開始
         if (_enemyController != null)
         {
             _enemyController.PlayReloadAnimation();
         }
 
+        // 弾の生成とテキスト表示
         if (_cylinderController != null)
         {
             _cylinderController.SetCylinder();
         }
 
-        float timer = 0f;
-        while (!_isAnimFinished && timer < 2.5f)
-        {
-            timer += Time.deltaTime;
-            yield return null;
-        }
-
-        yield return new WaitForSeconds(0.5f);
+        // リロードアニメーションの長さに合わせた時間待機
+        yield return new WaitForSeconds(3.9f);
 
         yield return StartCoroutine(NotifyTurnStartRoutine());
 
@@ -193,7 +189,7 @@ public class BattleManager : MonoBehaviour
                 else
                 {
                     PlayShootSE(true);
-                    ApplyDirectDamageToPlayer(dueDamage);
+                    yield return StartCoroutine(ApplyDirectDamageToPlayerRoutine(dueDamage));
                 }
                 if (_playerHp <= 0 || _enemyHp <= 0) yield break;
             }
@@ -231,7 +227,7 @@ public class BattleManager : MonoBehaviour
                 }
 
                 float timer = 0f;
-                while (!_isAnimFinished && timer < 2.0f)
+                while (!_isAnimFinished && timer < 0.8f)
                 {
                     timer += Time.deltaTime;
                     yield return null;
@@ -242,12 +238,7 @@ public class BattleManager : MonoBehaviour
             }
             else
             {
-                if (_battleCameraController != null)
-                {
-                    yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
-                }
-
-                ApplyDirectDamageToPlayer(damage);
+                yield return StartCoroutine(ApplyDirectDamageToPlayerRoutine(damage));
                 if (_playerHp > 0) ChangeTurn(nextTurnIfHit);
             }
         }
@@ -295,11 +286,7 @@ public class BattleManager : MonoBehaviour
                 else
                 {
                     PlayShootSE(true);
-                    if (_battleCameraController != null)
-                    {
-                        yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
-                    }
-                    ApplyDirectDamageToPlayer(dueDamage);
+                    yield return StartCoroutine(ApplyDirectDamageToPlayerRoutine(dueDamage));
                 }
                 if (_playerHp <= 0 || _enemyHp <= 0) yield break;
             }
@@ -317,6 +304,14 @@ public class BattleManager : MonoBehaviour
         yield return new WaitForSeconds(0.3f);
 
         PlayShootSE(isReal);
+
+        // ★ 敵が撃ち終わった後、構えを戻す ReturnRv（Idleへ戻る）を必ず呼び出す
+        if (_enemyController != null)
+        {
+            _enemyController.PlayReturnAnimation();
+        }
+
+        yield return new WaitForSeconds(0.4f); // ReturnRvのモーションへの余韻タメ
 
         if (isReal)
         {
@@ -337,7 +332,7 @@ public class BattleManager : MonoBehaviour
                 }
 
                 timer = 0f;
-                while (!_isAnimFinished && timer < 2.0f)
+                while (!_isAnimFinished && timer < 0.8f)
                 {
                     timer += Time.deltaTime;
                     yield return null;
@@ -348,12 +343,7 @@ public class BattleManager : MonoBehaviour
             }
             else
             {
-                if (_battleCameraController != null)
-                {
-                    yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
-                }
-
-                ApplyDirectDamageToPlayer(damage);
+                yield return StartCoroutine(ApplyDirectDamageToPlayerRoutine(damage));
                 if (_enemyHp > 0 && _playerHp > 0) ChangeTurn(BattleTurn.Player);
             }
         }
@@ -363,11 +353,6 @@ public class BattleManager : MonoBehaviour
             if (_artifactManager != null)
             {
                 _artifactManager.CheckCoolAdjacentOnSelfBlank(isEnemyTurn);
-                int heal = _artifactManager.CheckHealOnSelfBlank(isEnemyTurn);
-                if (heal > 0)
-                {
-                    _enemyHp = Mathf.Min(_maxHp, _enemyHp + heal);
-                }
             }
 
             BattleTurn nextTurn = isShootingEnemySelf ? BattleTurn.Enemy : BattleTurn.Player;
@@ -389,7 +374,10 @@ public class BattleManager : MonoBehaviour
         }
     }
 
-    private void ApplyDirectDamageToPlayer(int baseAmount)
+    /// <summary>
+    /// プレイヤーへのダメージ適用と、ブラックアウト演出。死亡時は暗い状態のままタイトルへ推移する
+    /// </summary>
+    private IEnumerator ApplyDirectDamageToPlayerRoutine(int baseAmount)
     {
         int finalDamage = baseAmount;
 
@@ -414,13 +402,29 @@ public class BattleManager : MonoBehaviour
                 _playerHp = Mathf.Max(0, _playerHp - finalDamage);
             }
 
-            if (_playerLanternController != null) _playerLanternController.UpdateLanternGlow(_playerHp);
-
             if (_playerHp <= 0)
             {
-                Debug.LogWarning("ゲームオーバー！");
-                Invoke(nameof(BattleSetup), 3.0f);
+                // ★ 死亡時：ブラックアウト（暗転）の瞬間だけを起こし、そのまま覚醒させずに暗い状態でタイトルへ遷移する
+                if (_battleCameraController != null)
+                {
+                    _battleCameraController.PlayRecoil(isHeavyHit: true);
+                }
+
+                // カメラ制御側で暗転状態を作って少し待機（例: 0.5秒の暗闇）
+                yield return new WaitForSeconds(0.5f);
+
+                Debug.Log("ゲームオーバー：暗転したままタイトルへ遷移します。");
+                SceneManager.LoadScene("TitleScene");
+                yield break;
             }
+
+            // 生存時は通常のブラックアウト＆再覚醒演出を実行
+            if (_battleCameraController != null)
+            {
+                yield return StartCoroutine(_battleCameraController.PlayBlackoutWakeUpRoutine());
+            }
+
+            if (_playerLanternController != null) _playerLanternController.UpdateLanternGlow(_playerHp);
         }
     }
 
@@ -434,7 +438,10 @@ public class BattleManager : MonoBehaviour
             finalDamage = damageReflectResult.Item1;
             int reflect = damageReflectResult.Item2;
 
-            if (reflect > 0) ApplyDirectDamageToPlayer(reflect);
+            if (reflect > 0)
+            {
+                StartCoroutine(ApplyDirectDamageToPlayerRoutine(reflect));
+            }
         }
 
         if (finalDamage > 0)
@@ -459,7 +466,7 @@ public class BattleManager : MonoBehaviour
                     bool hasBonus = _artifactManager.HasBonusInterestArtifact();
                     MoneyManager.Instance.CalculateWinReward(hasBonus);
                 }
-                Invoke(nameof(BattleSetup), 3.0f);
+                // 勝利時もタイトルに戻す場合はここに SceneManager.LoadScene("TitleScene"); を追加できます
             }
         }
     }
@@ -481,19 +488,33 @@ public class BattleManager : MonoBehaviour
 
         _currentTurn = nextTurn;
 
-        if (_battleCameraController != null)
+        StartCoroutine(TurnChangeRoutine(nextTurn));
+    }
+
+    private IEnumerator TurnChangeRoutine(BattleTurn nextTurn)
+    {
+        if (nextTurn == BattleTurn.Enemy)
         {
-            if (_currentTurn == BattleTurn.Enemy)
+            if (_enemyController != null)
+            {
+                _enemyController.PlayReturnAnimation();
+            }
+
+            if (_battleCameraController != null)
             {
                 _battleCameraController.SwitchCameraForTarget(targetIsEnemy: true, isShootingSelf: false);
-                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: false));
-            }
-            else
-            {
-                _battleCameraController.ResetCamera();
-                StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurnIsPlayer: true));
             }
         }
+        else
+        {
+            if (_battleCameraController != null)
+            {
+                _battleCameraController.ResetCamera();
+            }
+        }
+
+        StartCoroutine(WaitCameraAndProcessArtifactsRoutine(nextTurn == BattleTurn.Player));
+        yield break;
     }
 
     private IEnumerator ReloadAndResetRoutine(BattleTurn nextTurn)
@@ -505,23 +526,20 @@ public class BattleManager : MonoBehaviour
 
         yield return new WaitForSeconds(0.2f);
 
-        _isAnimFinished = false;
+        // 人間のリロードアニメーション全体を再生
         if (_enemyController != null)
         {
             _enemyController.PlayReloadAnimation();
         }
 
+        // 弾の再装填とテキスト表示
         if (_cylinderController != null)
         {
             _cylinderController.SetCylinder();
         }
 
-        float timer = 0f;
-        while (!_isAnimFinished && timer < 2.5f)
-        {
-            timer += Time.deltaTime;
-            yield return null;
-        }
+        // リロード完了を待つ
+        yield return new WaitForSeconds(3.9f);
 
         yield return new WaitForSeconds(0.3f);
 
@@ -568,6 +586,7 @@ public class BattleManager : MonoBehaviour
 
     private IEnumerator NotifyTurnStartRoutine()
     {
+        _currentTurn = BattleTurn.Player; // 安全のため確実にプレイヤーターンに設定
         if (_currentTurn == BattleTurn.Player && _artifactManager != null)
         {
             if (_artifactManager.CheckPredictNextBullet())
